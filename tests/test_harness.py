@@ -270,6 +270,67 @@ def test_an_outline_row_is_a_case_under_its_title_filled_from_the_row(tmp_path: 
     assert '"cancelling.feature: An order is cancelled by hand"' in (dir / "tests/flows.yaml").read_text()
 
 
+ROUTES = """Feature: Routes
+
+  Scenario: A route of an included router is named with the router's prefix
+    When someone pings "/api/v2/ping/anna"
+
+  Scenario: A route of a mounted app is named with the mount's prefix
+    When someone pings "/sub/ping/anna"
+
+  Scenario: A route of a router included in a mounted app is named with both prefixes
+    When someone pings "/sub/v3/ping/anna"
+"""
+
+ROUTES_STEPS = """from pytest_bdd import parsers, when
+
+
+@when(parsers.parse('someone pings "{path}"'))
+def pings(harness, path: str) -> None:
+    pinged = harness.http().get(path)
+    assert pinged.status == 200, pinged.text
+"""
+
+ROUTERS = """
+
+from fastapi import APIRouter
+
+router = APIRouter()
+
+
+@router.get("/ping/{who}")
+async def ping(who: str) -> dict:
+    return {"who": who}
+
+
+app.include_router(router, prefix="/api/v2")
+sub = FastAPI()
+sub.include_router(router)
+sub.include_router(router, prefix="/v3")
+app.mount("/sub", sub)
+"""
+
+
+def test_a_route_is_named_with_every_prefix_it_sits_under(tmp_path: Path) -> None:
+    dir = sample("shop", tmp_path)
+    main = dir / "shop/main.py"
+    write(
+        dir,
+        {
+            "shop/main.py": main.read_text() + ROUTERS,
+            "tests/features/routes.feature": ROUTES,
+            "tests/steps/routes.py": ROUTES_STEPS,
+        },
+    )
+
+    code, out, _ = suite(dir)
+    assert code == 0, out
+    flows = (dir / "tests/flows.yaml").read_text()
+    assert "  - message: http GET /api/v2/ping/{who}\n" in flows
+    assert "  - message: http GET /sub/ping/{who}\n" in flows
+    assert "  - message: http GET /sub/v3/ping/{who}\n" in flows
+
+
 SHARED_TITLE = """Feature: Cancelling
 
   Scenario Outline: An order cancelled by hand is gone

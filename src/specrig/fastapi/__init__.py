@@ -34,9 +34,13 @@ class _Recorder:
             self.route = _named(scope)
 
 
-# A mount's prefix is in root_path as it matched; FastAPI's routers carry theirs in the route.
+# A mount's prefix is in root_path as it matched; FastAPI's routers carry theirs in the
+# route, and since 0.137 an included router's only in the context it keeps for the route.
 def _named(scope: dict[str, Any]) -> str | None:
-    template = getattr(scope.get("route"), "path", None)
+    matched = scope.get("route")
+    effective = scope.get("fastapi", {}).get("effective_route_context")
+    is_matched = getattr(effective, "original_route", None) is matched
+    template = getattr(effective if is_matched else matched, "path", None)
     if not isinstance(template, str):
         return None
     root_path = scope.get("root_path", "")

@@ -491,8 +491,9 @@ the edits are let through, and the plugin says so once.
 
 ## Limits
 
-- FastAPI, and any ASGI application a module builds, through the `fastapi`
-  harness; Django 5.2 and up through its WSGI handler. Flask has no harness.
+- FastAPI 0.90 and up, and any ASGI application a module builds, through the
+  `fastapi` harness; Django 4.2 and up through its WSGI handler. Flask has no
+  harness.
 - The service is imported once per run: what a module builds as it loads — a
   dictionary it fills, a client it opens at import — is the run's, not the case's.
   A service that keeps such state builds it in its lifespan, or caches it with

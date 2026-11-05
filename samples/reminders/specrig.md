@@ -1,7 +1,7 @@
 # specrig.md
 
 How an agent works in this service under specrig: Rule #11, and how the suite runs.
-`../../.venv/bin/specrig agents` writes this file with `specrig` 0.1.0, and an edit here is lost on the next
+`../../.venv/bin/specrig agents` writes this file with `specrig` 0.1.1, and an edit here is lost on the next
 run; `AGENTS.md` beside it is the service's own.
 
 **Read `CONTRIBUTING.md` first, if it exists.** It holds service-specific

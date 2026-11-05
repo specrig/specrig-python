@@ -144,9 +144,10 @@ libraries.
 
 ## The owner's calls
 
-1. **Python and the frameworks.** Python 3.11 and up; FastAPI, and any ASGI app a
-   module builds; Django 5.2 and up.
-2. **pytest-bdd.** 8.1 and up, and pytest 8.4 and up.
+1. **Python and the frameworks.** Python 3.11 and up; FastAPI 0.90 and up, and any
+   ASGI app a module builds; Django 4.2 and up. Not the newest, and not what nobody
+   runs any more.
+2. **pytest-bdd.** 8.1 and up, and pytest 7.4 and up.
 3. **No bus yet.** RabbitMQ, Celery and Django's tasks are a later release.
 4. **gRPC.** Neither way.
 5. **Enforcement in Claude Code.** As in .NET and PHP: `rules` prints the
