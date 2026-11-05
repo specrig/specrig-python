@@ -1,0 +1,4 @@
+[project]
+name = "gateway"
+version = "0.1.0"
+dependencies = ["fastapi", "httpx", "pydantic-settings", "redis", "requests", "sqlalchemy[asyncio]", "asyncpg"]

@@ -1,0 +1,122 @@
+specrig: agents-fixtures/1
+
+cases:
+  - name: the stub init writes
+    agents: |
+      # AGENTS.md
+
+      Instructions for AI coding agents working in shop.
+
+      Read @specrig.md before the first edit: Rule #11, and how this service's suite runs.
+
+      ## This service
+
+      <!-- What shop is for, who calls it, which neighbours it calls and what it
+      publishes. Written by the people who own it. -->
+    verdict: ok
+
+  - name: the reference init adds to the end of a file of the service's own
+    agents: |
+      # AGENTS.md
+
+      Run the suite with:
+
+      ```
+      make test
+      ```
+
+      Read @specrig.md before the first edit: Rule #11, and how this service's suite runs.
+    verdict: ok
+
+  - name: the reference inside a sentence
+    agents: |
+      Rule #11 is in @specrig.md and nowhere else.
+    verdict: ok
+
+  - name: the reference ending its line
+    agents: |
+      Before the first edit, read @specrig.md
+    verdict: ok
+
+  - name: the old heading quoted in a fence, beside the reference
+    agents: |
+      Read @specrig.md before the first edit.
+
+      ~~~
+      ## Rule #11 — specification before code
+      ~~~
+    verdict: ok
+
+  - name: no file
+    agents: null
+    verdict: absent
+
+  - name: "a file from before specrig.md, all of Rule #11 in it"
+    agents: |
+      # AGENTS.md
+
+      Instructions for AI coding agents working in shop.
+
+      ## The short version
+
+      - **Three steps, and you stop after each one.**
+
+      ## Rule #11 — specification before code
+
+      ### Whether this rule applies here
+    verdict: stale
+
+  - name: a file from before specrig.md the reference was added to
+    agents: |
+      # AGENTS.md
+
+      ## Rule #11 — specification before code
+
+      ### Whether this rule applies here
+
+      Read @specrig.md before the first edit: Rule #11, and how this service's suite runs.
+    verdict: stale
+
+  - name: the old heading with whitespace after it
+    agents: "## Rule #11 — specification before code \t\n\nRead @specrig.md before the first edit.\n"
+    verdict: stale
+
+  - name: an empty file
+    agents: ""
+    verdict: unreferenced
+
+  - name: a file of the service's own
+    agents: |
+      # AGENTS.md
+
+      `specrig.md` holds Rule #11.
+    verdict: unreferenced
+
+  - name: the reference in a code span
+    agents: |
+      The import is written `@specrig.md`.
+    verdict: unreferenced
+
+  - name: the reference in a fence
+    agents: |
+      ```
+      @specrig.md
+      ```
+    verdict: unreferenced
+
+  - name: the reference in a fence never closed
+    agents: |
+      ````
+      ```
+      @specrig.md
+    verdict: unreferenced
+
+  - name: the reference followed by a full stop
+    agents: |
+      Read @specrig.md.
+    verdict: unreferenced
+
+  - name: the reference in brackets
+    agents: |
+      Rule #11 (@specrig.md) comes first.
+    verdict: unreferenced

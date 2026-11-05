@@ -1,0 +1,37 @@
+[
+  {
+    "case": "orders.feature: The customer sees what is left to pay",
+    "records": [
+      { "seq": 1, "dir": "in", "kind": "http", "name": "GET /orders/{id}", "step": "Action" },
+      { "seq": 2, "dir": "out", "kind": "http", "name": "GET /invoices/{orderId}", "step": "Action" }
+    ]
+  },
+  {
+    "case": "orders.feature: An order the shop does not have is refused",
+    "records": [
+      { "seq": 1, "dir": "in", "kind": "http", "name": "GET /orders/{id}", "step": "Action", "error": "HTTP 404 order_not_found" }
+    ]
+  },
+  {
+    "case": "orders.feature: The app shows the order and whose it is",
+    "records": [
+      { "seq": 1, "dir": "in", "kind": "http", "name": "POST /orders", "step": "Context", "request": { "id": 7 } },
+      { "seq": 2, "dir": "in", "kind": "grpc", "name": "/shop.Orders/Get", "step": "Action", "request": { "id": 7 } },
+      { "seq": 3, "dir": "out", "kind": "http", "name": "GET /invoices/{orderId}", "step": "Action" },
+      { "seq": 4, "dir": "out", "kind": "grpc", "name": "/customers.Customers/OfOrder", "step": "Action", "request": { "order": 7 } }
+    ]
+  },
+  {
+    "case": "pay.feature: A saved card pays",
+    "records": [
+      { "seq": 1, "dir": "in", "kind": "http", "name": "POST /orders", "step": "Action", "request": { "card": { "id": "c1" }, "items": [ { "sku": "tea" } ] } },
+      { "seq": 2, "dir": "out", "kind": "http", "name": "POST /payments", "step": "Action", "request": { "card": "c1", "amount": 120 } }
+    ]
+  },
+  {
+    "case": "pay.feature: An invoice is paid later",
+    "records": [
+      { "seq": 1, "dir": "in", "kind": "http", "name": "POST /orders", "step": "Action", "request": { "items": [ { "sku": "tea" }, { "sku": "milk" } ] } }
+    ]
+  }
+]

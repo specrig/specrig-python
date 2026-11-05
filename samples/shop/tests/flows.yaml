@@ -1,0 +1,59 @@
+# Generated from the component suite by specrig: every whole run rewrites the
+# structure; only the description fields are yours.
+specrig: flows/1
+service: shop
+inputs:
+  - message: command cancel
+    fields:
+      - "[]"
+    branches:
+      - cases:
+          - "placing.feature: An order is cancelled by hand"
+  - message: command settle_payments
+    branches:
+      - sends:
+          - http GET /invoices
+        cases:
+          - "placing.feature: A paid order has nothing left to pay"
+  - message: http GET /api/orders/{order_id}
+    branches:
+      - cases:
+          - "placing.feature: A paid order has nothing left to pay"
+      - refused: HTTP 404 order_not_found
+        cases:
+          - "orders.feature: An order the shop does not have is refused"
+      - refused: HTTP 503 database_unavailable
+        cases:
+          - "orders.feature: The customer is told to come back while the shop's database is down"
+      - sends:
+          - http GET /invoices/{orderId}
+        cases:
+          - "orders.feature: The customer sees what is left to pay"
+      - sends:
+          - http GET /invoices/{orderId}
+        refused: HTTP 503 billing_unavailable
+        cases:
+          - "orders.feature: The customer is told to come back while billing does not answer"
+  - message: http POST /api/orders
+    fields:
+      - amount
+      - id
+    branches:
+      - refused: HTTP 422
+        cases:
+          - "placing.feature: An order without an amount is refused"
+      - sends:
+          - http POST /invoices
+        sent:
+          http POST /invoices:
+            - amount
+            - order
+        cases:
+          - "placing.feature: A placed order is invoiced once the customer has their answer"
+outputs:
+  - message: http GET /invoices
+  - message: http GET /invoices/{orderId}
+  - message: http POST /invoices
+    fields:
+      - amount
+      - order

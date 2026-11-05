@@ -1,0 +1,68 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "specrig"
+version = "0.1.0"
+description = "A harness for a FastAPI or Django service developed specification first"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+classifiers = [
+    "Framework :: Django",
+    "Framework :: FastAPI",
+    "Framework :: Pytest",
+    "Programming Language :: Python :: 3",
+]
+dependencies = [
+    "jsonschema>=4.18",
+    "pytest>=8.4",
+    "pytest-bdd>=8.1",
+    "pyyaml>=6.0",
+    "time-machine>=2.16",
+    "tomlkit>=0.13",
+]
+
+[project.optional-dependencies]
+fastapi = ["fastapi>=0.115"]
+django = ["django>=5.2"]
+postgres = ["psycopg[binary]>=3.2"]
+
+[project.scripts]
+specrig = "specrig.tool.cli:main"
+
+[project.entry-points.pytest11]
+specrig = "specrig.suite"
+
+[project.urls]
+Homepage = "https://github.com/specrig/specrig-python"
+Protocol = "https://github.com/specrig/protocol"
+
+[dependency-groups]
+dev = [
+    "alembic>=1.16",
+    "httpx>=0.27",
+    "psycopg[binary]>=3.2",
+    "pydantic-settings>=2.8",
+    "redis>=5.0",
+    "requests>=2.32",
+    "ruff>=0.12",
+    "sqlalchemy>=2.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/specrig"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+src = ["src", ".", "samples/shop", "samples/reminders"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501"]

@@ -1,0 +1,48 @@
+# Generated from the component suite by specrig: every whole run rewrites the
+# structure; only the description fields are yours.
+specrig: flows/1
+service: reminders
+inputs:
+  - message: command remind
+    branches:
+      - sends:
+          - http GET /invoices
+          - http POST /reminders
+        sent:
+          http POST /reminders:
+            - amount
+            - order
+        cases:
+          - "reminders.feature: The reminders are run by hand"
+  - message: command send_reminders
+    branches:
+      - sends:
+          - http GET /invoices
+        cases:
+          - "reminders.feature: A customer reminded today is not reminded again"
+          - "reminders.feature: An invoice not yet due is not reminded of"
+      - sends:
+          - http GET /invoices
+          - http POST /reminders
+        sent:
+          http POST /reminders:
+            - amount
+            - order
+        cases:
+          - "reminders.feature: A customer whose invoice is overdue is reminded"
+  - message: http GET /reminders/{order}
+    branches:
+      - cases:
+          - "history.feature: The last reminder of an order is shown with the day it was sent"
+      - refused: HTTP 404 reminder_not_found
+        cases:
+          - "history.feature: An order never reminded of has no reminder"
+      - refused: HTTP 503 database_unavailable
+        cases:
+          - "history.feature: The reminders are told to come back while their database is down"
+outputs:
+  - message: http GET /invoices
+  - message: http POST /reminders
+    fields:
+      - amount
+      - order

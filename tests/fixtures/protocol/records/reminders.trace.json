@@ -1,0 +1,34 @@
+[
+  {
+    "case": "reminders.feature: Every overdue customer is reminded",
+    "records": [
+      { "seq": 1, "dir": "in", "kind": "command", "name": "SendReminders", "step": "Action" },
+      { "seq": 2, "dir": "out", "kind": "http", "name": "GET /invoices", "step": "Action" },
+      { "seq": 3, "dir": "out", "kind": "http", "name": "POST /reminders", "step": "Action", "request": { "order": 7, "amount": 120 } },
+      { "seq": 4, "dir": "out", "kind": "event", "name": "reminders.sent", "step": "Action", "request": { "order": 7, "amount": 120 } },
+      { "seq": 5, "dir": "out", "kind": "http", "name": "POST /reminders", "step": "Action", "request": { "order": 9, "amount": 80 } },
+      { "seq": 6, "dir": "out", "kind": "event", "name": "reminders.sent", "step": "Action", "request": { "order": 9, "amount": 80 } }
+    ]
+  },
+  {
+    "case": "reminders.feature: A customer whose invoice is overdue is reminded",
+    "records": [
+      { "seq": 1, "dir": "in", "kind": "command", "name": "SendReminders", "step": "Action" },
+      { "seq": 2, "dir": "out", "kind": "http", "name": "GET /invoices", "step": "Action" },
+      { "seq": 3, "dir": "out", "kind": "http", "name": "POST /reminders", "step": "Action", "request": { "order": 7, "amount": 120 } },
+      { "seq": 4, "dir": "out", "kind": "event", "name": "reminders.sent", "step": "Action", "request": { "order": 7, "amount": 120 } }
+    ]
+  },
+  {
+    "case": "reminders.feature: A payment billing reports is acknowledged",
+    "records": [
+      { "seq": 1, "dir": "in", "kind": "event", "name": "invoices.paid", "step": "Action", "request": { "order": 7 } }
+    ]
+  },
+  {
+    "case": "reminders.feature: A payment report the reminders cannot read is dropped",
+    "records": [
+      { "seq": 1, "dir": "in", "kind": "event", "name": "invoices.paid", "step": "Action", "request": "a payment, in prose", "error": "dropped" }
+    ]
+  }
+]

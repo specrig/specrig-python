@@ -1,0 +1,53 @@
+# Generated from the component suite by specrig: every whole run rewrites the
+# structure; only the description fields are yours.
+specrig: flows/1
+service: shop
+inputs:
+  - message: grpc /shop.Orders/Get
+    fields:
+      - id
+    branches:
+      - sends:
+          - http GET /invoices/{orderId}
+          - grpc /customers.Customers/OfOrder
+        sent:
+          grpc /customers.Customers/OfOrder:
+            - order
+        cases:
+          - "orders.feature: The app shows the order and whose it is"
+  - message: http GET /orders/{id}
+    branches:
+      - refused: HTTP 404 order_not_found
+        cases:
+          - "orders.feature: An order the shop does not have is refused"
+      - sends:
+          - http GET /invoices/{orderId}
+        cases:
+          - "orders.feature: The customer sees what is left to pay"
+  - message: http POST /orders
+    fields:
+      - card.id
+      - items[].sku
+    needs:
+      http POST /payments:
+        - card.id
+    branches:
+      - cases:
+          - "pay.feature: An invoice is paid later"
+      - sends:
+          - http POST /payments
+        sent:
+          http POST /payments:
+            - amount
+            - card
+        cases:
+          - "pay.feature: A saved card pays"
+outputs:
+  - message: grpc /customers.Customers/OfOrder
+    fields:
+      - order
+  - message: http GET /invoices/{orderId}
+  - message: http POST /payments
+    fields:
+      - amount
+      - card

@@ -1,0 +1,4 @@
+[project]
+name = "stock"
+version = "0.1.0"
+dependencies = ["django", "django-environ", "psycopg[binary]", "requests"]

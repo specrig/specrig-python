@@ -1,0 +1,119 @@
+specrig: markers-fixtures/1
+
+cases:
+  - name: an area with each of its lists
+    marker: |
+      agents:
+        areas:
+          events:
+            paths: [../shared/events/]
+            modes: [spec, platform]
+            grant: [redgreen]
+
+  - name: an area closed in every mode
+    marker: |
+      agents:
+        areas:
+          events:
+            paths: [../shared/events/]
+            modes: []
+
+  - name: an area that follows the class table
+    marker: |
+      agents:
+        areas:
+          events:
+            paths: [../shared/events/]
+            grant: [platform]
+
+  - name: modes written as a string
+    marker: |
+      agents:
+        areas:
+          events:
+            paths: [../shared/events/]
+            modes: spec
+    error: agents.areas.events
+
+  - name: grant written as a string
+    marker: |
+      agents:
+        areas:
+          events:
+            paths: [../shared/events/]
+            grant: redgreen
+    error: agents.areas.events
+
+  - name: paths written as a string
+    marker: |
+      agents:
+        areas:
+          events:
+            paths: ../shared/events/
+    error: agents.areas.events
+
+  - name: paths written as a mapping
+    marker: |
+      agents:
+        areas:
+          events:
+            paths:
+              contracts: ../shared/events/
+    error: agents.areas.events
+
+  - name: no paths
+    marker: |
+      agents:
+        areas:
+          events:
+            modes: [spec]
+    error: agents.areas.events
+
+  - name: an empty list of paths
+    marker: |
+      agents:
+        areas:
+          events:
+            paths: []
+    error: agents.areas.events
+
+  - name: modes left empty
+    marker: |
+      agents:
+        areas:
+          events:
+            paths: [../shared/events/]
+            modes:
+    error: agents.areas.events
+
+  - name: a number among the modes
+    marker: |
+      agents:
+        areas:
+          events:
+            paths: [../shared/events/]
+            modes: [spec, 1]
+    error: agents.areas.events
+
+  - name: a mode the table does not have
+    marker: |
+      agents:
+        areas:
+          events:
+            paths: [../shared/events/]
+            grant: [review]
+    error: agents.areas.events
+
+  - name: an area written as a string
+    marker: |
+      agents:
+        areas:
+          events: ../shared/events/
+    error: agents.areas.events
+
+  - name: areas written as a list
+    marker: |
+      agents:
+        areas:
+          - events
+    error: agents.areas

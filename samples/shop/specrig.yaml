@@ -1,0 +1,5 @@
+guard: [../../.venv/bin/specrig]
+flows:
+  clients:
+    shop.billing.Billing: billing
+    shop.jobs: billing

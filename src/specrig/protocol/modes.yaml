@@ -1,0 +1,55 @@
+specrig: modes/1
+
+# A path of the service is in the first class whose patterns take it — these, and
+# those the stack's layout adds; the protocol gives the order and what each mode opens.
+classes:
+  - name: humans
+    what: CONTRIBUTING.md, the humans' own
+    patterns: [CONTRIBUTING.md]
+  - name: generated
+    what: specrig.md, and what else the stack's tool writes
+    patterns: [specrig.md]
+  - name: platform
+    what: the platform's files
+  - name: cases
+    what: the specification
+  - name: tests
+    what: the rest of the suite — the steps
+  - name: production
+    what: everything else in the service
+
+modes:
+  - name: spec
+    opens: [cases]
+    allows: "{{cases}}"
+    brief: >-
+      Rule #11 steps 0–2: "When the code came first", "Requirements in,
+      specification out", "Writing the cases" and "Verification, then approval".
+      Write the cases and the delta list, hand them over, stop.
+  - name: redgreen
+    opens: [tests, production]
+    allows: the steps and production code — anything but the cases and the platform's files
+    brief: >-
+      Rule #11 step 3: "Red-green" and "Changing an approved specification", and
+      where every service is until the human switches a mode. Switched to from spec
+      mode, it is the approval: the specification is frozen, and a correction to a
+      case is a return to spec mode. Bind the cases and run them red, then make
+      them green, stop.
+  - name: platform
+    opens: [platform, production]
+    allows: the platform's files, and production code for a seam
+    brief: >-
+      Platform mode: you work for the platform owner — the platform's files, the
+      areas the service's configuration opens to it, and production code where a
+      seam is missing. Not the cases and not the steps.
+  - name: auto
+    opens: [cases, tests, production]
+    includes: [spec, redgreen]
+    offered: false
+    allows: "{{cases}}, the steps and production code — anything but the platform's files"
+    brief: >-
+      Auto mode: the whole cycle without a stop, for a human who would rather not
+      switch modes but wants the work done specification first, and reviews it all
+      at once. The order holds — the cases and the delta list, the steps, the red run,
+      the code — and each step is left by you, not by a switch. Hand over at the end
+      what each stop would have shown (Rule #11, Auto mode), stop.

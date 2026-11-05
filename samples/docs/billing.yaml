@@ -1,0 +1,89 @@
+openapi: 3.1.0
+info:
+  title: billing
+  version: "1"
+paths:
+  /invoices:
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Invoicing"
+      responses:
+        "201":
+          description: invoiced
+    get:
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Invoice"
+  /invoices/{orderId}:
+    get:
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Invoice"
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /reminders:
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Reminder"
+      responses:
+        "202":
+          description: accepted
+components:
+  schemas:
+    Invoice:
+      type: object
+      required: [order, amount, dueOn]
+      properties:
+        order:
+          type: integer
+        amount:
+          type: integer
+        dueOn:
+          type: string
+          format: date
+    Invoicing:
+      type: object
+      required: [order, amount]
+      properties:
+        order:
+          type: integer
+        amount:
+          type: integer
+    Reminder:
+      type: object
+      required: [order, amount]
+      properties:
+        order:
+          type: integer
+        amount:
+          type: integer
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
