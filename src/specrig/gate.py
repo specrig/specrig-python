@@ -27,7 +27,7 @@ class Gate:
             listener, self._listener = self._listener, None
             open_, self._open = self._open, set()
         if listener is not None:
-            listener.close()
+            _drop(listener)
         for s in open_:
             _drop(s)
 
