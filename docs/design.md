@@ -38,18 +38,26 @@ modules are imported once per process, and the service's are no exception:
 So what makes a case's service its own is everything around the import: FastAPI's
 lifespan runs per case, the caches the service's modules keep through `functools`
 are forgotten, Django's caches are cleared and its connections closed, the
-resources are emptied, and every case calls from an address of its own, so a
-rate limit kept by address in a module is not spent by the cases before. What a
-module builds as it loads is the run's — a stated limit, not a hidden one.
+resources go back to what the migrations left, and every case calls from an
+address of its own, so a rate limit kept by address in a module is not spent by
+the cases before. What a module builds as it loads is the run's — a stated limit,
+not a hidden one.
 
 ## A start may read the database
 
 PHP's Laravel and Symfony build the application without touching the database, so
 the resources are readied after the boot. A FastAPI service's start often does
 read it — creates its tables, seeds, refuses to start without an administrator —
-so here the order is: migrate once, empty the resources, `seed()` what production
-holds before the start, start the service, then apply the faults a step set
-before the boot.
+so here the order is: migrate once, put the resources back as the migrations left
+them, `seed()` what production holds before the start and the migrations do not
+write, start the service, then apply the faults a step set before the boot.
+
+Back as the migrations left them, not empty: a schema without the rows its
+migrations write — the states an order moves through, the root of a tree — exists
+in no environment, a step that writes them again is a second copy of the
+migration that drifts from the first, and a `keep` for them carries one case's
+changes into the next. Writing them back turns foreign keys and triggers off for
+one transaction, which takes a superuser; migrations that write no rows need none.
 
 ## One request at a time
 
@@ -74,7 +82,7 @@ flight between steps, and `time_out` stands in for a slow neighbour, as in PHP.
 | clock | `time-machine`, from the step that sets it | the same |
 | logs | a handler on the root logger, beside the service's | the same |
 | grants | `replace(name, instance)`: the name replaced in every module of the service that holds it, and in FastAPI's `dependency_overrides` | the name replaced in every module that holds it |
-| Postgres | `alembic upgrade head` once per run, in a process of its own; every table but `alembic_version` and `keep` truncated before every case; a refusal by the gate, an error by SQLAlchemy's `before_cursor_execute` | `migrate` once per run; every table but Django's bookkeeping and `keep` truncated; an error by the connections' execute wrappers |
+| Postgres | `alembic upgrade head` once per run, in a process of its own, and the rows it wrote kept aside; before every case every table but `alembic_version` and `keep` truncated and those rows written back, with the sequences where they stood; a refusal by the gate, an error by SQLAlchemy's `before_cursor_execute` | `migrate` once per run, and the rows it wrote kept aside; every table but Django's bookkeeping and `keep` truncated and those rows written back; an error by the connections' execute wrappers |
 | Redis | `FLUSHDB` before every case; a refusal by the gate | the same |
 | steps | pytest-bdd: a plugin of `pytest11` marks Given, When and Then, fails a case on what the harness found, and writes `tests/flows.yaml` after a whole run | |
 | `tests/surface.yaml` | Python's `ast` over the service's modules: routes from FastAPI's decorators and routers | routes from the `ROOT_URLCONF` and the views' methods |

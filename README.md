@@ -233,8 +233,8 @@ lifespan runs from the boot to the end of the case, what the service's modules
 cache with `functools.cache` or `lru_cache` is forgotten, Django's caches are
 cleared and its connections closed, and the case's requests come from an address
 of its own, so what the service keeps by its caller's address — a rate limit — is
-not the last case's. The resources are provisioned once per run and emptied
-before every case, before the service starts.
+not the last case's. The resources are provisioned once per run and put back as
+the migrations left them before every case, before the service starts.
 
 A call no step answered gets a 501 and fails the case, named. After the case,
 every request and every answer is checked against the neighbour's contract: an
@@ -282,7 +282,7 @@ in `settings = "config.settings"` where FastAPI's names `app`; the rest is the s
 | `console` | FastAPI: the service's console, `module:callable`, where `pyproject.toml` has more than one script |
 | `constants` | the other variables the harness answers, as given |
 | `allow` | what a case may replace, as `module:name` |
-| `seed()` | what production holds before the service starts and no case is about — the first administrator, say —, written through the service's own models into the resources just emptied, before every start |
+| `seed()` | what production holds before the service starts that the migrations do not write and no case is about — the first administrator, say —, written through the service's own models into the resources just put back, before every start |
 
 A grant is a name the harness resolves when the service boots, so a renamed class
 breaks the boot instead of lingering in a list.
@@ -332,7 +332,7 @@ database is welcome where the service's settings are not.
 ## Postgres
 
 ```python
-database = Postgres("DATABASE_URL", scheme="postgresql+psycopg", keep=["currencies"])
+database = Postgres("DATABASE_URL", scheme="postgresql+psycopg")
 ```
 
 The variable receives one URL with the scheme given, `postgresql` by default. The
@@ -348,8 +348,18 @@ take it away whenever the service connected. The schema is the service's own,
 built at the first boot of the run, before the service starts, since a start may
 read its database: `alembic upgrade head` where the service has an `alembic.ini`,
 in a process of its own as production runs it, else whatever its lifespan
-creates; Django's `migrate`. Before every case, before the service starts, every
-table there is is truncated but the migrations' own and those `keep=` names.
+creates; Django's `migrate`. Then the rows the migrations wrote — a Django data
+migration's, alembic's `op.bulk_insert`'s — are copied into a `specrig_baseline`
+schema, and where each sequence stood is remembered. Before every case, before
+the service starts, the database goes back to what the migrations left: every
+table there is is truncated but the migration tool's own and those `keep=` names,
+and the copied rows are written back — a row a migration wrote is there in every
+case, a case's own is gone, and ids go on after the seeded ones. A table the
+service creates as it starts has no rows copied, and is emptied. Writing the rows
+back turns foreign keys and triggers off for one transaction, which needs a
+superuser: the container's role is one, and migrations that write no rows need
+none. A row a migration writes needs no `keep=`; a kept table is one no case
+resets.
 
 `harness.database.fail_with()` closes the gate: every connection the service holds
 is cut and every new one refused, as by a database that is down, and the service

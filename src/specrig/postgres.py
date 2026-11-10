@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from .rig import Rig
 
 _MARK = "specrig "
+_BASELINE = "specrig_baseline"
 
 
 @dataclass(frozen=True)
@@ -80,6 +81,8 @@ class _Server:
         self._lock = threading.Lock()
         self._started = False
         self._migration: BaseException | bool | None = None
+        self._restores: list[str] = []
+        self._sequences: list[tuple[str, int, bool]] = []
         self._connection: Any = None
 
     def _upstream(self) -> tuple[str, int]:
@@ -129,25 +132,74 @@ class _Server:
             ) from e
         return f"postgresql://postgres@{Docker.host()}:{port}/postgres"
 
-    def once(self, migrate: Callable[[], None]) -> None:
+    def once(self, migrate: Callable[[], None], keep: Sequence[str]) -> None:
         if self._migration is None:
             try:
                 migrate()
+                self._remember(keep)
+                self.reset(keep)
                 self._migration = False
             except Exception as e:
                 self._migration = e
         if isinstance(self._migration, BaseException):
             raise RuntimeError(f"{self.database} did not migrate: {self._migration}") from self._migration
 
-    # Found anew for every case: a service whose start creates its tables has none
-    # before its first case.
+    def _remember(self, keep: Sequence[str]) -> None:
+        connection = self._connected()
+        connection.execute(f"DROP SCHEMA IF EXISTS {_BASELINE} CASCADE")
+        for schema, table in self._tables(keep):
+            name = f"{_quoted(schema)}.{_quoted(table)}"
+            filled = connection.execute(
+                f"SELECT NOT relispartition AND EXISTS (SELECT 1 FROM {name}) FROM pg_class WHERE oid = %s::regclass",
+                (name,),
+            )
+            if filled.fetchone()[0]:
+                insertable = connection.execute(
+                    "SELECT column_name FROM information_schema.columns"
+                    " WHERE table_schema = %s AND table_name = %s AND is_generated = 'NEVER' ORDER BY ordinal_position",
+                    (schema, table),
+                )
+                columns = ", ".join(_quoted(column) for (column,) in insertable.fetchall())
+                copy = f"{_BASELINE}.t{len(self._restores)}"
+                connection.execute(f"CREATE SCHEMA IF NOT EXISTS {_BASELINE}")
+                connection.execute(f"CREATE TABLE {copy} AS SELECT {columns} FROM {name}")
+                self._restores.append(
+                    f"INSERT INTO {name} ({columns}) OVERRIDING SYSTEM VALUE SELECT {columns} FROM {copy}"
+                )
+            owned = connection.execute(
+                "SELECT pg_get_serial_sequence(%s, column_name) FROM information_schema.columns"
+                " WHERE table_schema = %s AND table_name = %s",
+                (name, schema, table),
+            )
+            for (sequence,) in owned.fetchall():
+                if sequence is not None:
+                    stood = connection.execute(f"SELECT last_value, is_called FROM {sequence}").fetchone()
+                    self._sequences.append((sequence, *stood))
+
     def reset(self, keep: Sequence[str]) -> None:
+        tables = [f"{_quoted(schema)}.{_quoted(table)}" for schema, table in self._tables(keep)]
+        if not tables:
+            return
+        connection = self._connected()
+        with connection.transaction():
+            if self._restores:
+                try:
+                    connection.execute("SET LOCAL session_replication_role = replica")
+                except Exception as e:
+                    raise RuntimeError(f"putting back the rows the migrations left needs a superuser: {e}") from e
+            connection.execute(f"TRUNCATE TABLE {', '.join(tables)} RESTART IDENTITY CASCADE")
+            for restore in self._restores:
+                connection.execute(restore)
+            with connection.cursor() as cursor:
+                cursor.executemany("SELECT setval(%s::regclass, %s, %s)", self._sequences)
+
+    def _tables(self, keep: Sequence[str]) -> list[tuple[str, str]]:
         found = self._connected().execute(
-            "SELECT schemaname, tablename FROM pg_tables WHERE schemaname NOT IN ('pg_catalog', 'information_schema') ORDER BY 1, 2"
+            "SELECT schemaname, tablename FROM pg_tables"
+            " WHERE schemaname NOT IN ('pg_catalog', 'information_schema', %s) ORDER BY 1, 2",
+            (_BASELINE,),
         )
-        tables = [f"{_quoted(schema)}.{_quoted(table)}" for schema, table in found.fetchall() if table not in keep]
-        if tables:
-            self._connected().execute(f"TRUNCATE TABLE {', '.join(tables)} RESTART IDENTITY CASCADE")
+        return [(schema, table) for schema, table in found.fetchall() if table not in keep]
 
     def _connected(self) -> Any:
         if self._connection is None or self._connection.closed:
@@ -196,9 +248,10 @@ class Postgres(Resource):
 
     def ready(self, rig: Rig) -> None:
         databases = rig.databases()
+        keep = (*self._keep, *databases.bookkeeping())
         server = self._held()
-        server.once(databases.migrate)
-        server.reset((*self._keep, *databases.bookkeeping()))
+        server.once(databases.migrate, keep)
+        server.reset(keep)
         self._rig = rig
 
     def started(self) -> None:
