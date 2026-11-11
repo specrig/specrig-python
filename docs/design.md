@@ -126,8 +126,8 @@ and `requests`' `HTTPAdapter`. Every other client meets the proxy.
 
 **A template names what a step answers, not what the service sent.** As in
 specrig-js, a path segment in braces takes any one segment, the exact path wins,
-and of two templates the first declared; `reply`, `reply_to`, `time_out` and
-`requests` all take one. The contract check and the trace go on naming a request
+and of two templates the first declared; `reply`, `reply_to`, `reply_with`,
+`time_out` and `requests` all take one. The contract check and the trace go on naming a request
 by the path it came with, so a template that matches too much is not hidden by
 the contract it is checked against. A reply's headers are added to the response
 as the transports hand it to the client, so `httpx`, `httpx2` and `requests` see

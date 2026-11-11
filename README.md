@@ -215,7 +215,9 @@ fixtures, autouse ones included, would change the service the cases see.
 |---|---|
 | `harness.<backend>.reply(method, path, status, body, headers)` | what the neighbour answers; `headers`, strings to strings, are added to the response the client sees. A segment in braces, `/orders/{id}`, takes any one segment, the exact path wins over a template and the first declared of two templates over the second — in every call here that names a path |
 | `harness.<backend>.reply_to(method, path, query, status, body, headers)` | the same, for a request whose query has these values; the reply naming the most of them wins |
-| `harness.<backend>.time_out(method, path, query=None)` | the neighbour does not answer in time: the client meets the timeout it would meet, at once |
+| `harness.<backend>.reply_with(method, path, answer, headers)` | the answer worked out from each request: `answer` takes what `requests` returns one of and gives `(status, body)`; a reply naming no query, checked as the others |
+| `harness.<backend>.time_out(method, path, query=None)` | the neighbour does not answer in time: the client meets the timeout it would meet, at once; no reply lifts it |
+| `harness.<backend>.heal()` | the neighbour answers again: every `time_out` is lifted, the replies stay |
 | `harness.<backend>.requests(method, path)` | what reached the neighbour: `method`, `path`, `query` and `json`, its decoded body; a template returns the requests it takes |
 | `harness.http()` | a client of the service's own stack: `get`, `post`, `put`, `patch`, `delete`, `send`; a response with `status`, `headers`, `text`, `json()` |
 | `harness.run(job, *args, **kwargs)` | a job — see below |

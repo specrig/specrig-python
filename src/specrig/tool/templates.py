@@ -166,7 +166,10 @@ neighbour `harness.py` names:
   every call below, and the exact path wins;
 - `harness.<neighbour>.reply_to(method, path, query, status, body)` — the same, for a
   request whose query has these values;
-- `harness.<neighbour>.time_out(method, path)` — the neighbour not answering in time;
+- `harness.<neighbour>.reply_with(method, path, answer)` — the answer worked out from
+  each request, `(status, body)`;
+- `harness.<neighbour>.time_out(method, path)` — the neighbour not answering in time,
+  until `harness.<neighbour>.heal()`;
 - `harness.<neighbour>.requests(method, path)` — what reached the neighbour, for a
   `Then`.
 

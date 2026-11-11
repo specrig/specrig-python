@@ -178,6 +178,75 @@ def test_a_neighbour_that_does_not_answer_in_time_is_unreachable_by_template_too
     assert get(backend, "/payments") == 200
 
 
+def test_heal_lifts_every_time_out_and_keeps_the_replies() -> None:
+    backend, _ = billing()
+    backend.reply("GET", "/invoices", 200, [])
+    backend.time_out("GET", "/invoices/7")
+    backend.time_out("GET", "/invoices", {"status": "paid"})
+    backend.reply("GET", "/invoices/7", 200, INVOICE)
+
+    with pytest.raises(Unreachable):
+        get(backend, "/invoices/7")
+    backend.heal()
+
+    assert get(backend, "/invoices/7") == 200
+    assert get(backend, "/invoices?status=paid") == 200
+
+
+def test_an_answer_is_worked_out_from_each_request() -> None:
+    backend, _ = billing()
+    backend.reply_with(
+        "GET",
+        "/invoices/{order}",
+        lambda r: (200, {**INVOICE, "order": int(r.path.rsplit("/", 1)[1])}),
+        {"X-Kind": "own"},
+    )
+
+    for order in (7, 8):
+        answered = backend.answer(Request("GET", f"https://billing.shop.test/invoices/{order}"))
+        assert (answered.status, answered.json()["order"], answered.headers["X-Kind"]) == (200, order, "own")
+    assert backend.failures() == []
+
+
+def test_an_answer_may_change_with_what_reached_the_neighbour() -> None:
+    backend, _ = billing()
+    backend.reply_with(
+        "GET",
+        "/invoices/7",
+        lambda r: (
+            (503, {"code": "busy", "message": "later"})
+            if len(backend.requests("GET", "/invoices/7")) == 1
+            else (200, INVOICE)
+        ),
+    )
+
+    assert [get(backend, "/invoices/7"), get(backend, "/invoices/7")] == [503, 200]
+    assert backend.failures() == []
+
+
+def test_an_answer_worked_out_is_a_declaration_naming_no_query() -> None:
+    backend, _ = billing()
+    backend.reply_with("GET", "/invoices", lambda r: (200, [INVOICE]))
+    backend.reply_to("GET", "/invoices", {"status": "paid"}, 200, [])
+
+    def listed(path: str) -> list[object]:
+        return backend.answer(Request("GET", f"https://billing.shop.test{path}")).json()
+
+    assert (listed("/invoices?status=unpaid"), listed("/invoices?status=paid")) == ([INVOICE], [])
+    backend.reply("GET", "/invoices", 200, [])
+    assert listed("/invoices") == []
+
+
+def test_the_contract_checks_an_answer_worked_out() -> None:
+    backend, _ = billing()
+    backend.reply_with("GET", "/invoices/{order}", lambda r: (200, {"order": 7}))
+
+    get(backend, "/invoices/7")
+
+    [failure] = backend.failures()
+    assert "GET /invoices/7 answered 200: $ 'amount' is a required property" in failure
+
+
 def test_the_contract_check_and_the_trace_name_a_request_by_its_real_path() -> None:
     backend, trace = billing()
     backend.reply("GET", "/invoices/{order}", 200, {"order": 7})

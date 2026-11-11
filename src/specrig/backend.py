@@ -27,6 +27,9 @@ class Received:
     json: Any
 
 
+Answer = Callable[[Received], tuple[int, Any]]
+
+
 class StandIn(ABC):
     origin: str
     setting: str | None
@@ -55,7 +58,7 @@ class Backend(StandIn):
         self.name = ""
         self._trace = Trace()
         self._checked: Contract | None = None
-        self._replies: dict[str, list[tuple[dict[str, list[str]], int, Any, dict[str, str]]]] = {}
+        self._replies: dict[str, list[tuple[dict[str, list[str]], Answer, dict[str, str]]]] = {}
         self._timeouts: dict[str, list[dict[str, list[str]]]] = {}
         self._received: list[Received] = []
         self._unanswered: list[str] = []
@@ -86,15 +89,26 @@ class Backend(StandIn):
     def reply_to(
         self, method: str, path: str, query: Query, status: int, body: Any = None, headers: Headers | None = None
     ) -> None:
+        declared = copy.deepcopy(body)
+        self._declare(method, path, _listed(query), lambda _: (status, declared), headers)
+
+    def reply_with(self, method: str, path: str, answer: Answer, headers: Headers | None = None) -> None:
+        self._declare(method, path, {}, answer, headers)
+
+    def _declare(
+        self, method: str, path: str, asked: dict[str, list[str]], answer: Answer, headers: Headers | None
+    ) -> None:
         key = f"{method.upper()} {path}"
-        asked = _listed(query)
         kept = [r for r in self._replies.get(key, []) if r[0] != asked]
-        self._replies[key] = [*kept, (asked, status, copy.deepcopy(body), dict(headers or {}))]
+        self._replies[key] = [*kept, (asked, answer, dict(headers or {}))]
 
     def time_out(self, method: str, path: str, query: Query | None = None) -> None:
         key = f"{method.upper()} {path}"
         asked = _listed(query or {})
         self._timeouts[key] = [*(q for q in self._timeouts.get(key, []) if q != asked), asked]
+
+    def heal(self) -> None:
+        self._timeouts = {}
 
     def requests(self, method: str, path: str) -> list[Received]:
         return [r for r in self._received if r.method == method.upper() and _takes(path, r.path)]
@@ -107,22 +121,25 @@ class Backend(StandIn):
         body = http.decoded(request.body)
         call = self._trace.begin()
         try:
-            self._received.append(Received(method, path, asked, body))
+            received = Received(method, path, asked, body)
+            self._received.append(received)
             if self._checked is not None:
                 self._violations.extend(self._checked.request(method, path, body))
             if _pick(_declared(self._timeouts, method, path), asked, lambda q: q) is not None:
                 raise Unreachable(f"{self.name} did not answer {key} in time", timed_out=True)
-            return self._fulfil(method, path, key + request.search(), asked)
+            return self._fulfil(received, key + request.search())
         finally:
             name = self._checked.name(method, path) if self._checked is not None else key
             self._trace.end(call, "out", "http", name, body)
 
-    def _fulfil(self, method: str, path: str, asked: str, query: dict[str, list[str]]) -> Response:
-        reply = _pick(_declared(self._replies, method, path), query, lambda r: r[0])
+    def _fulfil(self, received: Received, asked: str) -> Response:
+        method, path = received.method, received.path
+        reply = _pick(_declared(self._replies, method, path), received.query, lambda r: r[0])
         if reply is None:
             self._unanswered.append(asked)
             return _respond(501, {"code": "unanswered", "message": f"{method} {path}"})
-        _, status, body, headers = reply
+        _, answer, headers = reply
+        status, body = answer(received)
         if self._checked is not None:
             self._violations.extend(self._checked.response(method, path, status, {} if body is None else body))
         return _respond(status, None if status == 204 else ({} if body is None else body), headers)
