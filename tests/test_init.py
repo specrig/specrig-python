@@ -87,6 +87,122 @@ def test_a_django_service_is_set_up_by_its_settings_module_with_a_secret_key_of_
     assert '"SECRET_KEY": ""' not in harness
 
 
+def depending(dir: Path, *dependencies: str) -> None:
+    pyproject = dir / "pyproject.toml"
+    document = tomlkit.parse(pyproject.read_text())
+    document["project"]["dependencies"] = list(dependencies)
+    pyproject.write_text(tomlkit.dumps(document))
+
+
+@pytest.mark.parametrize(
+    ("drivers", "database", "extra"),
+    [
+        (["aiomysql", "pymysql"], 'MySQL("DATABASE_URL", scheme="mysql+aiomysql")', "mysql"),
+        (["asyncmy"], 'MySQL("DATABASE_URL", scheme="mysql+asyncmy")', "mysql"),
+        (["pymysql"], 'MySQL("DATABASE_URL", scheme="mysql+pymysql")', "mysql"),
+        (["mysqlclient"], 'MySQL("DATABASE_URL")', "mysql"),
+        (["aiosqlite"], 'SQLite("DATABASE_URL", scheme="sqlite+aiosqlite")', "sqlite"),
+    ],
+)
+def test_a_fastapi_service_is_given_the_database_its_driver_names(
+    tmp_path: Path, drivers: list[str], database: str, extra: str
+) -> None:
+    dir = copy("fastapi", tmp_path)
+    (dir / ".env.example").unlink()
+    depending(dir, "fastapi", "httpx", "pydantic-settings", "redis", "requests", "sqlalchemy[asyncio]", *drivers)
+
+    code, out = init([str(dir), "--backend", "crm=GATEWAY_CRM_URL"], Path("/"))
+
+    assert code == 0, out
+    harness = (dir / "tests/internal/harness.py").read_text()
+    assert f"    database = {database}\n" in harness
+    assert f"from specrig import {', '.join(sorted(['Backend', database.split('(')[0], 'Redis']))}\n" in harness
+    assert tomlkit.parse((dir / "pyproject.toml").read_text())["dependency-groups"]["dev"] == [
+        f"specrig[fastapi,{extra}]>=0.1"
+    ]
+
+
+def test_the_scheme_the_example_settings_name_wins_over_the_drivers(tmp_path: Path) -> None:
+    dir = copy("fastapi", tmp_path)
+    (dir / ".env.example").write_text("DATABASE_URL=mysql+pymysql://gateway@localhost/gateway\n")
+    depending(dir, "fastapi", "httpx", "pydantic-settings", "redis", "requests", "sqlalchemy", "aiomysql", "pymysql")
+
+    init([str(dir), "--backend", "crm=GATEWAY_CRM_URL"], Path("/"))
+
+    assert (
+        '    database = MySQL("DATABASE_URL", scheme="mysql+pymysql")\n'
+        in (dir / "tests/internal/harness.py").read_text()
+    )
+
+
+def test_a_sqlite_address_in_the_example_settings_gives_a_service_with_no_driver_sqlite(tmp_path: Path) -> None:
+    dir = copy("fastapi", tmp_path)
+    (dir / ".env.example").write_text("DATABASE_URL=sqlite:///./gateway.db\n")
+    depending(dir, "fastapi", "httpx", "pydantic-settings", "redis", "requests", "sqlalchemy")
+
+    init([str(dir), "--backend", "crm=GATEWAY_CRM_URL"], Path("/"))
+
+    assert '    database = SQLite("DATABASE_URL")\n' in (dir / "tests/internal/harness.py").read_text()
+
+
+def test_a_service_with_no_driver_and_no_sqlite_address_is_given_no_database(tmp_path: Path) -> None:
+    dir = copy("fastapi", tmp_path)
+    (dir / ".env.example").unlink()
+    depending(dir, "fastapi", "httpx", "pydantic-settings", "redis", "requests", "sqlalchemy")
+
+    init([str(dir), "--backend", "crm=GATEWAY_CRM_URL"], Path("/"))
+
+    harness = (dir / "tests/internal/harness.py").read_text()
+    assert "database =" not in harness
+    assert '"DATABASE_URL": ""' in harness
+    assert tomlkit.parse((dir / "pyproject.toml").read_text())["dependency-groups"]["dev"] == ["specrig[fastapi]>=0.1"]
+
+
+def test_a_sqlite_address_in_the_example_settings_leaves_a_postgres_service_on_postgres(tmp_path: Path) -> None:
+    dir = copy("fastapi", tmp_path)
+    (dir / ".env.example").write_text("DATABASE_URL=sqlite:///./dev.db\n")
+    depending(dir, "fastapi", "httpx", "pydantic-settings", "redis", "requests", "sqlalchemy", "psycopg")
+
+    init([str(dir), "--backend", "crm=GATEWAY_CRM_URL"], Path("/"))
+
+    assert (
+        '    database = Postgres("DATABASE_URL", scheme="postgresql+psycopg")\n'
+        in (dir / "tests/internal/harness.py").read_text()
+    )
+
+
+@pytest.mark.parametrize(
+    ("drivers", "engine", "database", "extra"),
+    [
+        (["mysqlclient"], None, 'MySQL("DATABASE_URL")', "mysql"),
+        ([], "django.db.backends.sqlite3", 'SQLite("DATABASE_URL")', "sqlite"),
+        (["psycopg"], "django.db.backends.sqlite3", 'SQLite("DATABASE_URL")', "sqlite"),
+        ([], "django.db.backends.mysql", 'MySQL("DATABASE_URL")', "mysql"),
+        ([], None, None, None),
+    ],
+)
+def test_a_django_service_is_given_the_database_its_engine_or_its_driver_names(
+    tmp_path: Path, drivers: list[str], engine: str | None, database: str | None, extra: str | None
+) -> None:
+    dir = copy("django", tmp_path)
+    depending(dir, "django", "django-environ", "requests", *drivers)
+    if engine is not None:
+        settings = dir / "stock/settings.py"
+        settings.write_text(
+            settings.read_text().replace(
+                'env.db("DATABASE_URL")', f'{{**env.db("DATABASE_URL"), "ENGINE": "{engine}"}}'
+            )
+        )
+
+    init([str(dir), "--backend", "warehouse=WAREHOUSE_URL"], Path("/"))
+
+    harness = (dir / "tests/internal/harness.py").read_text()
+    assert (f"    database = {database}\n" in harness) if database else ("database =" not in harness)
+    assert tomlkit.parse((dir / "pyproject.toml").read_text())["dependency-groups"]["dev"] == [
+        f"specrig[django{f',{extra}' if extra else ''}]>=0.1"
+    ]
+
+
 def test_init_writes_an_agents_md_of_the_services_own_that_brings_specrig_md_in(tmp_path: Path) -> None:
     dir = copy("fastapi", tmp_path)
 

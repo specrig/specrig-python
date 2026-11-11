@@ -171,7 +171,8 @@ class _Databases(Databases):
         from django.db import connections
 
         def failing(execute: Callable[..., Any], sql: str, params: Any, many: bool, context: Any) -> Any:
-            raise error
+            with context["connection"].wrap_database_errors:
+                raise error
 
         for connection in connections.all():
             if connection.settings_dict.get("NAME") == database:

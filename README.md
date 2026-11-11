@@ -9,7 +9,7 @@ application.
 **Status: built.** Everything below runs green on two samples — `shop`, a FastAPI
 API over Postgres through SQLAlchemy and Alembic, with a job and a command, and
 `reminders`, a Django service over Postgres and Redis with a job and a management
-command. [docs/design.md](docs/design.md) has what each part is built from and
+command; the tests run both again on MySQL and on SQLite. [docs/design.md](docs/design.md) has what each part is built from and
 why; what every specrig stack agrees on — the records, the modes, the text of
 `specrig.md` — is the [specrig protocol](https://github.com/specrig/protocol),
 whose modes and `specrig.md` parts are copied into
@@ -67,7 +67,8 @@ In the service's directory, with its virtual environment in `.venv`:
 .venv/bin/pip install "specrig[fastapi,postgres]"
 ```
 
-or `specrig[django,postgres]`, then:
+or `specrig[django,postgres]` — `mysql` or `sqlite` in place of `postgres` for a
+service on those —, then:
 
 ```bash
 .venv/bin/specrig init --backend billing=BILLING_URL --contract billing=../docs/billing.yaml
@@ -78,12 +79,19 @@ or `specrig[django,postgres]`, then:
 dependencies. `--backend` names a neighbour the service calls over HTTP and the
 variable that holds its address; a variable the code does not read is refused,
 with the list of those it does, and a service that calls out with no `--backend`
-is refused, naming the calls. Postgres becomes a `Postgres` resource where the
-service depends on a Postgres driver and reads `DATABASE_URL`, with the URL's
-scheme from `.env.example` or the drivers — `postgresql+psycopg`,
-`postgresql+asyncpg`; Redis a `Redis` where it depends on `redis` and reads a
-variable that names it. Every other variable the code needs is a constant the
-harness answers empty, and a Django service gets a `SECRET_KEY` of its own.
+is refused, naming the calls. The database the service reads from `DATABASE_URL`
+becomes a resource by what says which it is: a Django settings module's `ENGINE`
+first, then the server's driver the service depends on — a `Postgres` for psycopg
+or asyncpg, a `MySQL` for mysqlclient, PyMySQL, asyncmy or aiomysql —, and a
+`SQLite` only where nothing names a server and `.env.example` gives a `sqlite:`
+address or the service depends on aiosqlite; with none of these there is no
+database resource, and the variable is a constant like any other. The URL's scheme
+comes from `.env.example` where it names the dialect chosen, else from the drivers,
+an async one first — `postgresql+asyncpg`, `mysql+asyncmy` before `mysql+aiomysql`,
+`mysql+pymysql`, `sqlite+aiosqlite`. Redis becomes a `Redis` where it depends on
+`redis` and reads a variable that names it. Every other variable the code needs is
+a constant the harness answers empty, and a Django service gets a `SECRET_KEY` of
+its own.
 
 | option | |
 |---|---|
@@ -226,11 +234,11 @@ fixtures, autouse ones included, would change the service the cases see.
 | `harness.replace(target, instance)` | a granted class or function of the service, replaced before the service boots |
 | `harness.logs` | what the service logged, under its real logging configuration |
 | `harness.clock` | the service's clock: the wall clock until a step calls `set()`, then `advance()` |
-| `harness.<resource>.fail_with(error=None)` | the resource goes down for the service — see Postgres and Redis |
-| `harness.<postgres>.refuse(table, *writes)` | every insert, update and delete on the table, or those given, fails in Postgres itself, whoever sends it; reads go on working — see Postgres |
-| `harness.<postgres>.refuse_after(table, rows, *writes)` | the same after the first `rows` rows |
-| `harness.<postgres>.refuse_commit(table, *writes)` | the statements go through, and the commit of a transaction that wrote the table fails |
-| `harness.<postgres>.heal()` | the database comes back: `fail_with` and every refusal end, and the rows stay |
+| `harness.<resource>.fail_with(error=None)` | the resource goes down for the service — see Postgres, MySQL and SQLite, and Redis |
+| `harness.<database>.refuse(table, *writes)` | every insert, update and delete on the table, or those given, fails in the database itself, whoever sends it; reads go on working — see Postgres |
+| `harness.<database>.refuse_after(table, rows, *writes)` | the same after the first `rows` rows |
+| `harness.<postgres>.refuse_commit(table, *writes)` | Postgres only: the statements go through, and the commit of a transaction that wrote the table fails |
+| `harness.<database>.heal()` | the database comes back: `fail_with` and every refusal end, and the rows stay |
 | `harness.application` | FastAPI: the app the case runs |
 
 The service boots at the first step that reaches it, so a `Given` declares and
@@ -283,7 +291,7 @@ in `settings = "config.settings"` where FastAPI's names `app`; the rest is the s
 | member | |
 |---|---|
 | a `Backend` | an HTTP neighbour: its origin, the variable that points the service at it, its OpenAPI document, the schema of its 5xx |
-| a `Postgres` or `Redis` | a real system, and the variable that receives its address |
+| a `Postgres`, `MySQL`, `SQLite` or `Redis` | a real system, and the variable that receives its address |
 | `app` | FastAPI: the application, `module:attribute`; a function there builds a new one for every case |
 | `settings` | Django: the settings module |
 | `console` | FastAPI: the service's console, `module:callable`, where `pyproject.toml` has more than one script |
@@ -345,7 +353,11 @@ database = Postgres("DATABASE_URL", scheme="postgresql+psycopg")
 The variable receives one URL with the scheme given, `postgresql` by default. The
 server is `address=` if given, else `<SERVICE>_TEST_POSTGRES`, else a container
 started through the Docker socket and kept between runs — starting postgres costs
-seconds, a database a fraction of one. The database is the run's own:
+seconds, a database a fraction of one. Its role has no password, so the container
+is published on loopback only — on every interface where
+`TESTCONTAINERS_HOST_OVERRIDE` says the suite runs in a container of its own; a
+container an older specrig started is reused as it was published. The database is
+the run's own:
 `shop_test_<pid>`, created at the first boot and dropped when the run ends. A run
 killed before its end leaves its database behind, and the next run drops it: a
 name of that shape, marked by specrig over an hour ago, with nobody connected.
@@ -371,7 +383,11 @@ resets.
 `harness.database.fail_with()` closes the gate: every connection the service holds
 is cut and every new one refused, as by a database that is down, and the service
 meets its driver's own exception. An error given instead fails every statement
-with it — through SQLAlchemy's events, or Django's execute wrappers. A fault a
+with it — through SQLAlchemy's events, or Django's execute wrappers. An error of
+the driver's DB-API reaches the service as the framework raises one the driver
+raised: Django's `OperationalError` for psycopg's, SQLAlchemy's for SQLAlchemy —
+which wraps it itself from 2.1, and the harness before. With asyncpg the DB-API is
+SQLAlchemy's adapter, so asyncpg's own exceptions pass as given. A fault a
 step sets before the boot waits for the service to start, so the migration and
 the start go through; the next case starts whole.
 
@@ -391,6 +407,84 @@ and every refusal and keeps the rows. The reset before every case lifts the
 refusals, before it writes the rows back. They live in a schema of their own,
 `specrig_refusal`, which the reset's discovery and the `specrig_baseline` copy never
 see.
+
+## MySQL and SQLite
+
+```python
+database = MySQL("DATABASE_URL", scheme="mysql+pymysql")
+```
+
+```python
+database = SQLite("DATABASE_URL", scheme="sqlite+aiosqlite")
+```
+
+The scheme is `mysql` and `sqlite` by default. Both are Postgres's resource with
+what the dialect lacks worked around: the migrations once per run, the rows they
+wrote put back before every case, `keep=`, `fail_with`, `refuse`, `refuse_after` and
+`heal`. **There is no `refuse_commit`**: MySQL has no deferred constraint at all,
+and the only thing that fails an SQLite commit on demand is a deferred foreign
+key, which every driver raises as an `IntegrityError` — a case would test the
+conflict branch instead of a failed commit.
+
+**What a refusal raises is the dialect's.** A MySQL trigger refuses with
+`SIGNAL SQLSTATE '45000'`, which every MySQL driver raises as an
+`OperationalError`, the class of a lost connection: a service that answers an
+`OperationalError` as a database down answers a refused write the same way, as
+`shop` does with a 503. SQLite's `RAISE(ABORT)` is a failed constraint, so the
+service meets an `IntegrityError`. Postgres's refusal is an `InternalError`.
+
+### MySQL
+
+The server is `address=`, else `<SERVICE>_TEST_MYSQL`, else a `mysql:8.4` container
+started as root with no password and kept between runs, published as Postgres's
+is. MySQL 8.0.19 and up: the tests run on 8.4, and the MySQL ones passed once
+against 8.0.46. The database is the run's own, behind a gate, and a killed run's
+is dropped by the next, as Postgres's. MySQL keeps no comment on a database, so the
+mark is the comment of a `specrig_mark` table inside it; the copied rows sit in
+`specrig_kept_<n>` tables beside the service's, which the reset never sees; and the
+drop kills the connections left on the database first, since there is no
+`WITH (FORCE)`. The harness talks to MySQL through PyMySQL, which the `mysql` extra
+brings with `cryptography`: a user with a password over a connection without TLS
+signs in with an RSA key. The service talks through the driver its URL names.
+
+**A reset touches only what a case changed.** Truncating a table, creating a
+trigger and setting a counter are DDL in MySQL. `CHECKSUM TABLE` over every table
+in one statement finds the tables a case changed, and only those are emptied by
+`DELETE` and written back, in one transaction, on the harness's own connection,
+which checks no foreign keys and keeps an id 0 a migration wrote
+(`NO_AUTO_VALUE_ON_ZERO`). An insert trigger of a table with rows to write back and
+a delete trigger of a table with rows to delete are dropped first and created
+again after, in their order and the `sql_mode` they were made in, and a trigger the
+migrations made that a case dropped is made again; a counter is set back only where
+it moved. Measured on a laptop, six tables:
+
+| per reset | |
+|---|---|
+| nothing changed | ~3 ms |
+| two rows inserted | 21–24 ms, most of them setting the two counters back |
+| a row updated in a table with two triggers | 34–39 ms |
+| every table truncated and the rows written back | 118–158 ms |
+| Postgres, two rows inserted | ~7 ms |
+
+### SQLite
+
+**There is no address and no container.** The service is answered with a file of
+the run's own, `sqlite:////…/specrig-…/shop.db` with the scheme given, in a
+temporary directory the run removes at its end: nothing is shared between runs or
+processes, and nothing is left to sweep. The copied rows are kept in a second file
+that only the resetting connection attaches. SQLite cannot switch a trigger off, so
+the reset drops every trigger and creates it again inside its transaction, with
+foreign keys off on that connection, and puts `sqlite_sequence` back; it takes
+under a millisecond. A virtual table — FTS5, R*Tree — and the tables it keeps
+behind it are left as they are: their rows are not reset.
+
+Whether the service's own connections check foreign keys is the framework's, as in
+production: Django turns them on, SQLAlchemy leaves them off unless the service
+turns them on.
+
+`fail_with()` has no gate to close: every statement through SQLAlchemy or Django
+fails with `sqlite3.OperationalError("unable to open database file")`, as from a
+file that does not open, raised as the framework raises the driver's own.
 
 ## Redis
 
@@ -525,7 +619,7 @@ the edits are let through, and the plugin says so once.
 
 ## Limits
 
-- FastAPI 0.90 and up, and any ASGI application a module builds, through the
+- FastAPI 0.100 and up, and any ASGI application a module builds, through the
   `fastapi` harness; Django 4.2 and up through its WSGI handler. Flask has no
   harness.
 - The service is imported once per run: what a module builds as it loads — a
@@ -547,7 +641,7 @@ the edits are let through, and the plugin says so once.
 - The database is one URL in one variable. A Django service that sets its
   `DATABASES` host by host from several variables is answered on the one the
   harness names only.
-- `Postgres` and `Redis` are the resources there are.
+- `Postgres`, `MySQL`, `SQLite` and `Redis` are the resources there are.
 - One service per run: two suites in one `pytest` process are refused, and a run
   split by `pytest-xdist` writes no `tests/flows.yaml`, since no worker sees the
   whole.
@@ -578,7 +672,7 @@ run against copies of the samples, then the suites of the two samples in
 docker rm -f $(docker ps -aq --filter label=specrig=postgres)
 ```
 
-removes the kept Postgres container.
+removes the kept Postgres container, and `label=specrig=mysql` the MySQL one.
 
 ```bash
 make protocol

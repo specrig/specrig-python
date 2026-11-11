@@ -5,6 +5,7 @@ import functools
 import inspect
 import io
 import os
+import re
 import subprocess
 import sys
 import tomllib
@@ -207,14 +208,21 @@ class _Databases(Databases):
         return ["alembic_version"]
 
     def fail(self, database: str, error: BaseException) -> None:
-        from sqlalchemy import event
+        from sqlalchemy import __version__, event
         from sqlalchemy.engine import Engine
+        from sqlalchemy.exc import DBAPIError
 
         self.heal()
+        # Before 2.1 SQLAlchemy lets what this event raises through as it is; from 2.1 it
+        # handles a driver's error as its own, invalidating a pool a disconnect broke.
+        wrapped = tuple(int(part) for part in re.findall(r"\d+", __version__)[:2]) >= (2, 1)
 
-        def failing(conn: Any, *args: Any) -> None:
-            if conn.engine.url.database == database:
-                raise error
+        def failing(conn: Any, cursor: Any, statement: str, parameters: Any, *args: Any) -> None:
+            if conn.engine.url.database != database:
+                return
+            if not wrapped and isinstance(error, conn.dialect.dbapi.Error):
+                raise DBAPIError.instance(statement, parameters, error, conn.dialect.dbapi.Error) from error
+            raise error
 
         self._failing = failing
         event.listen(Engine, "before_cursor_execute", failing)

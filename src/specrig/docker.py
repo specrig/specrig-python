@@ -48,13 +48,17 @@ class Docker:
         labels: dict[str, str],
         name: str | None = None,
         command: list[str] | None = None,
+        loopback: bool = False,
     ) -> str:
+        binding = {"HostPort": ""}
+        if loopback and Docker.host() == "127.0.0.1":
+            binding["HostIp"] = "127.0.0.1"
         spec: dict[str, Any] = {
             "Image": image,
             "Env": env,
             "Labels": labels,
             "ExposedPorts": {f"{port}/tcp": {}},
-            "HostConfig": {"PortBindings": {f"{port}/tcp": [{"HostPort": ""}]}},
+            "HostConfig": {"PortBindings": {f"{port}/tcp": [binding]}},
         }
         if command:
             spec["Cmd"] = command

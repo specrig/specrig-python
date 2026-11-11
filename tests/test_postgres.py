@@ -5,7 +5,10 @@ from urllib.parse import urlsplit
 
 import psycopg
 import pytest
+import sqlalchemy
+from sqlalchemy import create_engine, event, text
 
+import specrig.fastapi
 from specrig import Postgres, Write
 
 pytestmark = pytest.mark.skipif(shutil.which("docker") is None, reason="postgres starts in Docker")
@@ -342,6 +345,44 @@ def test_heal_ends_an_error_given_to_fail_with() -> None:
     harness.database.heal()
 
     assert harness.failure is None
+
+
+def failing(harness: Harness, error: BaseException) -> tuple[Any, list[BaseException]]:
+    engine = create_engine(harness.address.replace("postgresql://", "postgresql+psycopg://", 1))
+    with engine.connect() as connection:
+        connection.execute(text("select 1"))
+    seen: list[BaseException] = []
+    event.listen(engine, "handle_error", lambda context: seen.append(context.original_exception))
+    databases = specrig.fastapi._Databases(None)  # type: ignore[arg-type]
+    databases.fail(harness.database._held().database, error)
+    try:
+        with pytest.raises(sqlalchemy.exc.DBAPIError) as raised, engine.connect() as connection:
+            connection.execute(text("select 1"))
+    finally:
+        databases.heal()
+        engine.dispose()
+    return raised.value, seen
+
+
+def test_a_drivers_error_given_reaches_a_sqlalchemy_service_as_sqlalchemys() -> None:
+    error = psycopg.OperationalError("the disk is full")
+
+    raised, _ = failing(migrated("fail_sqlalchemy"), error)
+
+    assert isinstance(raised, sqlalchemy.exc.OperationalError)
+    assert raised.orig is error
+
+
+@pytest.mark.skipif(
+    tuple(int(part) for part in sqlalchemy.__version__.split(".")[:2]) < (2, 1),
+    reason="SQLAlchemy handles an event's error as a driver's from 2.1",
+)
+def test_sqlalchemy_handles_a_drivers_error_given_as_one_the_driver_raised() -> None:
+    error = psycopg.OperationalError("the disk is full")
+
+    _, seen = failing(migrated("fail_sqlalchemy_handled"), error)
+
+    assert seen == [error]
 
 
 def test_a_refusal_set_before_the_service_starts_waits_for_it() -> None:

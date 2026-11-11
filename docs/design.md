@@ -57,7 +57,9 @@ migrations write — the states an order moves through, the root of a tree — e
 in no environment, a step that writes them again is a second copy of the
 migration that drifts from the first, and a `keep` for them carries one case's
 changes into the next. Writing them back turns foreign keys and triggers off for
-one transaction, which takes a superuser; migrations that write no rows need none.
+one transaction, which takes a superuser on Postgres; migrations that write no rows
+need none. MySQL's foreign key checks are a session's and SQLite's a connection's,
+and the triggers on both are dropped and created again instead.
 
 ## One request at a time
 
@@ -83,6 +85,8 @@ flight between steps, and `time_out` stands in for a slow neighbour, as in PHP.
 | logs | a handler on the root logger, beside the service's | the same |
 | grants | `replace(name, instance)`: the name replaced in every module of the service that holds it, and in FastAPI's `dependency_overrides` | the name replaced in every module that holds it |
 | Postgres | `alembic upgrade head` once per run, in a process of its own, and the rows it wrote kept aside; before every case every table but `alembic_version` and `keep` truncated and those rows written back, with the sequences where they stood; a refusal by the gate, an error by SQLAlchemy's `before_cursor_execute`, a table's writes by triggers in a schema of their own | `migrate` once per run, and the rows it wrote kept aside; every table but Django's bookkeeping and `keep` truncated and those rows written back; an error by the connections' execute wrappers; a table's writes by the same triggers |
+| MySQL | as Postgres, but only the tables whose `CHECKSUM TABLE` moved are emptied by `DELETE` and written back, with the triggers those writes would fire dropped and created again in their order, a trigger a case dropped made again, and a counter set back only where it moved; a refusal by the gate, a table's writes by triggers that `SIGNAL` | as Postgres, with the same reset |
+| SQLite | a file of the run's own in a temporary directory; before every case every table but the virtual ones emptied and written back from a second file the resetting connection attaches, every trigger dropped and created again, `sqlite_sequence` put back; a refusal and an error alike by SQLAlchemy's `before_cursor_execute`; a table's writes by triggers that `RAISE(ABORT)` | the same, through the connections' execute wrappers |
 | Redis | `FLUSHDB` before every case; a refusal by the gate | the same |
 | steps | pytest-bdd: a plugin of `pytest11` marks Given, When and Then, fails a case on what the harness found, and writes `tests/flows.yaml` after a whole run | |
 | `tests/surface.yaml` | Python's `ast` over the service's modules: routes from FastAPI's decorators and routers | routes from the `ROOT_URLCONF` and the views' methods |
@@ -148,6 +152,50 @@ triggers, and the quota that lets `refuse_after`'s rows through, live in a
 copies, and the reset drops it first. A refusal a step sets before the boot waits
 for the start, since the reset would lift it and the schema may not exist yet.
 
+**One engine, a server half, a dialect each.** As in gorib's `sqltest`: what every
+database does — migrate once, keep the rows, put them back before every case, the
+steps' faults and refusals — is `database.py`; the address chain, the container,
+the database of the run's own, the gate and the sweep are `server.py`, which
+Postgres and MySQL share; each dialect is its own SQL. SQLite has no server half,
+since a file needs none.
+
+**MySQL puts back only what a case changed.** Truncating a table, creating a
+trigger and setting a counter are DDL there: measured on a laptop, ~16 ms for a
+`TRUNCATE`, ~3 ms for a `CREATE TRIGGER`, 3 to 7 ms for an `ALTER TABLE …
+AUTO_INCREMENT`, against ~0.2 ms for a `DELETE` in a transaction. So the reset finds
+the tables a case changed by `CHECKSUM TABLE`, one statement for all of them, and
+touches nothing else: ~3 ms when nothing changed, against 118–158 ms for truncating
+six tables and writing their rows back. The triggers it drops are those its own writes
+would fire, created again in the `sql_mode` they were made in.
+
+**The harness's MySQL connection checks no foreign keys.** gorib's `sqltest` resets
+on a connection it closes afterwards, so that one with the checks off never goes
+back to the pool the service shares. Here the harness's connection is its own and
+never the service's, so it stays open with the checks off: opening one costs ~8 ms,
+three times an untouched reset.
+
+**No `refuse_commit` on MySQL or SQLite.** MySQL has no deferred constraint at all;
+SQLite fails a commit on demand only through a deferred foreign key, which every
+driver raises as an `IntegrityError`, so a case would test the conflict branch
+instead of a failed commit. The method is absent rather than failing when called.
+
+**SQLite's outage is an error, not a gate.** A file has no connection to cut, so
+`fail_with()` fails every statement through the frameworks' hooks with the driver's
+own `unable to open database file`. A driver's error reaches the service as the
+framework raises the driver's own, Postgres's and MySQL's alike. Django's execute
+wrappers run outside its error wrapper, so the hook raises inside it, and Django
+marks the connection as a real failure would. SQLAlchemy before 2.1 lets an event's
+error through as it is, so the hook wraps a DB-API error there; from 2.1 SQLAlchemy
+handles the raw error as one the driver raised — the disconnect check, the pool's
+invalidation, `handle_error` — and the hook leaves it to it.
+
+**A dialect from evidence, not by elimination.** `init` takes the database from a
+Django settings module's `ENGINE`, else from a server's driver, and gives SQLite
+only on a `sqlite:` address in `.env.example` or aiosqlite: a Django or SQLAlchemy
+service with no driver it can see is not taken for one on SQLite, and a
+`sqlite:///dev.db` a Postgres service keeps for its developers does not turn it
+into one.
+
 **Alembic in a process of its own.** Alembic's `env.py` configures logging as it
 runs, disabling the loggers the service already made; production runs the
 migration as a job of its own, and so does the harness.
@@ -170,14 +218,17 @@ libraries.
 
 ## The owner's calls
 
-1. **Python and the frameworks.** Python 3.11 and up; FastAPI 0.90 and up, and any
-   ASGI app a module builds; Django 4.2 and up. Not the newest, and not what nobody
-   runs any more.
+1. **Python and the frameworks.** Python 3.11 and up; FastAPI 0.100 and up, the
+   first on pydantic 2, and any ASGI app a module builds; Django 4.2 and up, with
+   psycopg 3.1.8 and up, which Django 4.2 asks for. Not the newest, and not what
+   nobody runs any more.
 2. **pytest-bdd.** 8.1 and up, and pytest 7.4 and up.
 3. **No bus yet.** RabbitMQ, Celery and Django's tasks are a later release.
 4. **gRPC.** Neither way.
 5. **Enforcement in Claude Code.** As in .NET and PHP: `rules` prints the
    service's rules, and the plugin checks every edit against them.
+6. **Databases.** Postgres, MySQL and SQLite. The frameworks' own scaffolds stay
+   as they are; the harness adds its dialects.
 
 ## Order, and where it stands
 
@@ -186,5 +237,5 @@ libraries.
 | 0 | the records and the fixtures | built |
 | 1 | boot, settings, HTTP stand-ins and the contract check, the pytest-bdd binding, Postgres, logs, the clock; HTTP, jobs and commands as ways in; `tests/flows.yaml` | built |
 | 2 | `tests/surface.yaml` and `tests/checks.yaml`, `init`, `rules`, `specrig.md` | built |
-| 3 | Redis, grants, `fail_with`, a refused table and `heal`, reply headers and path templates | built |
+| 3 | Redis, grants, `fail_with`, a refused table and `heal`, reply headers and path templates; MySQL and SQLite | built |
 | 4 | a bus and a queue | not started |

@@ -7,7 +7,7 @@ $(VENV):
 	$(VENV)/bin/pip install -q --upgrade pip
 
 install: $(VENV)
-	$(VENV)/bin/pip install -q -e ".[fastapi,django,postgres]" --group dev
+	$(VENV)/bin/pip install -q -e ".[fastapi,django,postgres,mysql,sqlite]" --group dev
 
 generate: install
 	cd samples/shop && $(VENV)/bin/specrig surface && $(VENV)/bin/specrig agents

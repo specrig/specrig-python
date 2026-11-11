@@ -18,6 +18,23 @@ from .service import GUARD, Service
 from .templates import Backend, Plan, Resource
 
 _POSTGRES = {"psycopg", "psycopg-binary", "psycopg2", "psycopg2-binary", "asyncpg"}
+_MYSQL = {"mysqlclient", "pymysql", "asyncmy", "aiomysql"}
+_SCHEMES = {
+    "Postgres": (
+        "postgresql",
+        {"asyncpg": "postgresql+asyncpg", "psycopg": "postgresql+psycopg", "psycopg-binary": "postgresql+psycopg"},
+    ),
+    "MySQL": ("mysql", {"asyncmy": "mysql+asyncmy", "aiomysql": "mysql+aiomysql", "pymysql": "mysql+pymysql"}),
+    "SQLite": ("sqlite", {"aiosqlite": "sqlite+aiosqlite"}),
+}
+_EXTRAS = {"Postgres": "postgres", "MySQL": "mysql", "SQLite": "sqlite"}
+_ENGINES = {
+    "postgresql": "Postgres",
+    "postgis": "Postgres",
+    "mysql": "MySQL",
+    "sqlite3": "SQLite",
+    "spatialite": "SQLite",
+}
 
 
 def init(args: list[str], cwd: Path) -> tuple[int, str]:
@@ -74,9 +91,9 @@ def _resources(service: Service, framework: str, read_: set[str]) -> list[Resour
     database = next((s for s in sorted(read_) if s == "DATABASE_URL"), None) or next(
         (s for s in sorted(read_) if "DATABASE" in s and s.endswith("URL")), None
     )
-    if database is not None and dependencies & _POSTGRES:
-        scheme = urlscheme(example.get(database, "")) or _scheme(dependencies, framework)
-        resources.append(Resource("Postgres", "database", database, None if scheme == "postgresql" else scheme))
+    if database is not None and (found := _database(service, framework, dependencies, example.get(database, ""))):
+        kind, scheme = found
+        resources.append(Resource(kind, "database", database, None if scheme == _SCHEMES[kind][0] else scheme))
     redis = next((s for s in sorted(read_) if "REDIS" in s), None)
     if redis is not None and dependencies & {"redis", "django-redis"}:
         resources.append(Resource("Redis", "cache", redis))
@@ -85,15 +102,51 @@ def _resources(service: Service, framework: str, read_: set[str]) -> list[Resour
 
 def urlscheme(url: str) -> str | None:
     match = re.match(r"^([a-z][a-z0-9+.-]*)://", url.strip().strip("'\""))
-    return None if match is None or not match.group(1).startswith("postgres") else match.group(1)
+    return None if match is None or _dialect(match.group(1)) is None else match.group(1)
 
 
-def _scheme(dependencies: set[str], framework: str) -> str:
-    if framework == "django" or "sqlalchemy" not in dependencies:
-        return "postgresql"
-    if "asyncpg" in dependencies:
-        return "postgresql+asyncpg"
-    return "postgresql+psycopg" if dependencies & {"psycopg", "psycopg-binary"} else "postgresql"
+def _dialect(scheme: str) -> str | None:
+    prefixes = {"Postgres": "postgres", "MySQL": "mysql", "SQLite": "sqlite"}
+    return next((kind for kind, prefix in prefixes.items() if scheme.startswith(prefix)), None)
+
+
+def _database(service: Service, framework: str, dependencies: set[str], example: str) -> tuple[str, str] | None:
+    given = urlscheme(example)
+    named = None if given is None else _dialect(given)
+    servers = [kind for kind, drivers in (("Postgres", _POSTGRES), ("MySQL", _MYSQL)) if dependencies & drivers]
+    engine = _engine(service) if framework == "django" else None
+    if engine is not None:
+        kind = engine
+    elif servers:
+        kind = named if named in servers else servers[0]
+    elif named == "SQLite" or "aiosqlite" in dependencies:
+        kind = "SQLite"
+    else:
+        return None
+    if given is not None and named == kind:
+        return kind, given
+    default, drivers = _SCHEMES[kind]
+    sqlalchemy = framework != "django" and "sqlalchemy" in dependencies
+    return kind, next((s for d, s in drivers.items() if sqlalchemy and d in dependencies), default)
+
+
+def _engine(service: Service) -> str | None:
+    module = Path(*service.django_settings().split("."))
+    file = next((f for f in (module.with_suffix(".py"), module / "__init__.py") if (service.root / f).is_file()), None)
+    if file is None:
+        return None
+    engines = set()
+    for node in ast.walk(ast.parse((service.root / file).read_text(encoding="utf-8"))):
+        if isinstance(node, ast.Dict):
+            for key, value in zip(node.keys, node.values, strict=True):
+                if (
+                    isinstance(key, ast.Constant)
+                    and key.value == "ENGINE"
+                    and isinstance(value, ast.Constant)
+                    and isinstance(value.value, str)
+                ):
+                    engines.add(_ENGINES.get(value.value.rsplit(".", 1)[-1]))
+    return engines.pop() if len(engines) == 1 else None
 
 
 def _example(service: Service) -> dict[str, str]:
@@ -209,7 +262,7 @@ def _pyproject(plan: Plan) -> list[str]:
     file = plan.service.root / "pyproject.toml"
     if "specrig" in plan.service.dependencies():
         return []
-    extras = [plan.framework, *(["postgres"] if any(r.kind == "Postgres" for r in plan.resources) else [])]
+    extras = [plan.framework, *(_EXTRAS[r.kind] for r in plan.resources if r.kind in _EXTRAS)]
     requirement = f"specrig[{','.join(extras)}]>=0.1"
     if not file.is_file():
         return [f"  there is no pyproject.toml: add {requirement} to the service's dev requirements"]

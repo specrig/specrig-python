@@ -76,6 +76,12 @@ CATCHES = """Feature: What the harness catches
     When the customer opens order 7
     Then they are told something went wrong
 
+  Scenario: A driver's error given fails every statement as SQLAlchemy's own
+    Given order 7 of 120 is placed
+    And the shop's database fails with its driver's error
+    When the customer opens order 7
+    Then they are told to come back later
+
   Scenario: What the service cached is forgotten
     Given the service has counted a start
     Then it counts one start, and logs it
@@ -103,6 +109,7 @@ CAUGHT = """import urllib.error
 import urllib.request
 
 import httpx
+import psycopg
 import pytest
 from pytest_bdd import given, then, when
 
@@ -158,6 +165,11 @@ def not_granted(harness: Harness) -> None:
 @given("the shop's database fails every statement")
 def failing(harness: Harness) -> None:
     harness.database.fail_with(RuntimeError("the disk is full"))
+
+
+@given("the shop's database fails with its driver's error")
+def failing_driver(harness: Harness) -> None:
+    harness.database.fail_with(psycopg.OperationalError("the disk is full"))
 
 
 @then("they are told something went wrong")
@@ -217,6 +229,7 @@ def test_the_harness_fails_a_case_on_what_it_caught_and_lets_a_granted_class_be_
         "test_a_granted_class_is_replaced_wherever_the_service_holds_it",
         "test_what_is_not_granted_is_not_replaced",
         "test_an_error_given_fails_every_statement",
+        "test_a_drivers_error_given_fails_every_statement_as_sqlalchemys_own",
         "test_what_the_service_cached_is_forgotten",
         "test_what_the_service_cached_is_forgotten_again",
     ):
@@ -352,6 +365,163 @@ def test_a_django_case_has_a_table_refuse_its_writes_and_gets_the_database_back(
 
     assert code == 0, out
     assert sorted(results) == ["test_a_table_refusing_its_writes_fails_the_run_and_a_database_that_comes_back_takes_it"]
+
+
+ON_ANOTHER_DATABASE = """Feature: The shop on another database
+
+  Scenario: A table refusing its writes fails them, and a database that comes back takes them
+    Given billing accepts invoices
+    And the shop's orders refuse every write
+    When the customer places order 9 of 80
+    Then they are told what the refusal makes of it
+    And order 9 is gone
+    And the case's own write to the orders is refused
+    When the shop's database comes back
+    And the customer places order 9 of 80
+    Then order 9 of 80 is kept unpaid
+
+  Scenario: The database going down leaves the shop unable to reach its orders
+    Given billing accepts invoices
+    And the shop's database is down
+    When the customer places order 9 of 80
+    Then they are told the database is unavailable
+    When the shop's database comes back
+    And the customer places order 9 of 80
+    Then order 9 of 80 is kept unpaid
+
+  Scenario: A case starts with the order the last case placed gone
+    Given billing accepts invoices
+    When the customer places order 9 of 80
+    Then order 9 of 80 is kept unpaid
+"""
+
+ON_ANOTHER_DATABASE_STEPS = """from pytest_bdd import given, then
+
+from specrig import Response
+from tests.internal.harness import Harness
+
+
+@given("the shop's database is down")
+def down(harness: Harness) -> None:
+    harness.database.fail_with()
+
+
+@then("they are told what the refusal makes of it")
+def refused_answer(placed: Response) -> None:
+    assert placed.status == REFUSED_STATUS, placed.text
+
+
+@then("they are told the database is unavailable")
+def unavailable(placed: Response) -> None:
+    assert (placed.status, placed.json()["type"]) == (503, "database_unavailable"), placed.text
+"""
+
+
+@pytest.mark.parametrize(
+    ("database", "refused_status"),
+    [('MySQL("DATABASE_URL", scheme="mysql+pymysql")', 503), ('SQLite("DATABASE_URL")', 500)],
+)
+def test_a_fastapi_service_runs_its_cases_on_mysql_and_sqlite(
+    tmp_path: Path, database: str, refused_status: int
+) -> None:
+    dir = sample("shop", tmp_path)
+    harness = dir / "tests/internal/harness.py"
+    kind = database.split("(")[0]
+    harness.write_text(
+        harness.read_text()
+        .replace('Postgres("DATABASE_URL", scheme="postgresql+psycopg")', database)
+        .replace("Postgres", kind)
+    )
+    write(
+        dir,
+        {
+            "tests/features/database.feature": ON_ANOTHER_DATABASE,
+            "tests/steps/refused.py": REFUSED_STEPS,
+            "tests/steps/database.py": ON_ANOTHER_DATABASE_STEPS.replace("REFUSED_STATUS", str(refused_status)),
+        },
+    )
+
+    code, out, results = suite(dir)
+
+    assert code == 0, out
+    assert all(outcome == "passed" for outcome, _ in results.values()), out
+    assert "test_the_database_going_down_leaves_the_shop_unable_to_reach_its_orders" in results
+
+
+DJANGO_ON_ANOTHER_DATABASE = """Feature: The reminders on another database
+
+  Scenario: A table refusing its writes fails the run, and a database that comes back takes it
+    Given billing holds an unpaid invoice of 120 for order 7, due yesterday
+    And billing accepts reminders
+    And the reminders' table refuses every write
+    When the reminders run, whatever comes of it
+    Then no reminder is noted for order 7
+    When the reminders' database comes back
+    And the reminders run
+    Then order 7 is noted as reminded of 120
+
+  Scenario: The database going down fails the run as Django fails it
+    Given billing holds an unpaid invoice of 120 for order 7, due yesterday
+    And billing accepts reminders
+    And the reminders' database is down
+    When the reminders run into the database being down
+    When the reminders' database comes back
+    And the reminders run
+    Then order 7 is noted as reminded of 120
+"""
+
+DJANGO_ON_ANOTHER_DATABASE_STEPS = """import pytest
+from django.db import OperationalError
+from pytest_bdd import given, when
+
+from reminders.jobs import send_reminders
+from tests.internal.harness import Harness
+
+
+@given("the reminders' database is down")
+def down(harness: Harness) -> None:
+    harness.database.fail_with()
+
+
+@when("the reminders run into the database being down")
+def run_down(harness: Harness) -> None:
+    with pytest.raises(OperationalError):
+        harness.run(send_reminders)
+"""
+
+# Django's MySQL backend wants mysqlclient, which builds against MySQL's C client: PyMySQL stands in.
+PYMYSQL = 'import pymysql\n\npymysql.version_info = (2, 2, 1, "final", 0)\npymysql.install_as_MySQLdb()\n'
+
+
+@pytest.mark.parametrize("database", ['MySQL("DATABASE_URL")', 'SQLite("DATABASE_URL")'])
+def test_a_django_service_runs_its_cases_on_mysql_and_sqlite(tmp_path: Path, database: str) -> None:
+    dir = sample("reminders", tmp_path)
+    harness = dir / "tests/internal/harness.py"
+    kind = database.split("(")[0]
+    harness.write_text(harness.read_text().replace('Postgres("DATABASE_URL")', database).replace("Postgres", kind))
+    settings = dir / "config/settings.py"
+    if kind == "MySQL":
+        text = PYMYSQL + settings.read_text().replace("backends.postgresql", "backends.mysql")
+    else:
+        text = settings.read_text().replace(
+            'database(os.environ["DATABASE_URL"])',
+            '{"ENGINE": "django.db.backends.sqlite3", "NAME": os.environ["DATABASE_URL"].removeprefix("sqlite:///")}',
+        )
+    settings.write_text(text)
+    write(
+        dir,
+        {
+            "tests/features/database.feature": DJANGO_ON_ANOTHER_DATABASE,
+            "tests/steps/refused.py": REFUSED_DJANGO_STEPS,
+            "tests/steps/database.py": DJANGO_ON_ANOTHER_DATABASE_STEPS,
+        },
+    )
+
+    code, out, results = suite(dir)
+
+    assert code == 0, out
+    assert all(outcome == "passed" for outcome, _ in results.values()), out
+    assert "test_the_database_going_down_fails_the_run_as_django_fails_it" in results
 
 
 def test_a_narrowed_run_writes_no_record_and_an_ignored_case_does_not_narrow_one(tmp_path: Path) -> None:
@@ -608,9 +778,17 @@ DJANGO = """Feature: What the harness takes away
     And the reminders' cache is down
     When the reminders run, whatever comes of it
     Then the run failed on ConnectionError
+
+  Scenario: A driver's error given fails every statement as Django's own
+    Given billing holds an unpaid invoice of 120 for order 7, due yesterday
+    And billing accepts reminders
+    And the reminders' database fails with its driver's error
+    When the reminders run into Django's own error
 """
 
-TAKEN = """import pytest
+TAKEN = """import psycopg
+import pytest
+from django.db import OperationalError
 from pytest_bdd import given, then, when
 
 from reminders.jobs import send_reminders
@@ -626,6 +804,17 @@ def failing(harness: Harness) -> None:
 @given("the reminders' cache is down")
 def cache_down(harness: Harness) -> None:
     harness.cache.fail_with()
+
+
+@given("the reminders' database fails with its driver's error")
+def failing_driver(harness: Harness) -> None:
+    harness.database.fail_with(psycopg.OperationalError("the disk is full"))
+
+
+@when("the reminders run into Django's own error")
+def run_django_error(harness: Harness) -> None:
+    with pytest.raises(OperationalError, match="the disk is full"):
+        harness.run(send_reminders)
 
 
 @when("the reminders run, whatever comes of it")
@@ -653,6 +842,7 @@ def test_a_django_case_takes_the_database_and_the_cache_away(tmp_path: Path) -> 
 
     assert code == 0, out
     assert sorted(results) == [
+        "test_a_drivers_error_given_fails_every_statement_as_djangos_own",
         "test_an_error_given_fails_every_statement",
         "test_the_reminders_fail_while_their_cache_is_down",
     ]

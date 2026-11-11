@@ -1,7 +1,7 @@
 # specrig.md
 
 How an agent works in this service under specrig: Rule #11, and how the suite runs.
-`../../.venv/bin/specrig agents` writes this file with `specrig` 0.3.1, and an edit here is lost on the next
+`../../.venv/bin/specrig agents` writes this file with `specrig` 0.3.2, and an edit here is lost on the next
 run; `AGENTS.md` beside it is the service's own.
 
 **Read `CONTRIBUTING.md` first, if it exists.** It holds service-specific
@@ -414,9 +414,9 @@ origin `harness.py` does not name — it is refused before it leaves.
 database or the cache away until the next case. A write that fails halfway is not an
 outage: `harness.<database>.refuse(table)` makes one table refuse writes,
 `refuse_after(table, rows)` lets that many rows through first, and reads keep working,
-so a `Then` can check what the failed write left; `refuse_commit(table)` fails only
-the commit. `heal()` is the database coming back: it ends the fault and every refusal
-and keeps the rows.
+so a `Then` can check what the failed write left; on Postgres, `refuse_commit(table)`
+fails only the commit. `heal()` is the database coming back: it ends the fault and
+every refusal and keeps the rows.
 
 **What may be stood in for is given, not chosen.** `tests/internal/` is read-only. A
 case that needs another neighbour, or an answer the stand-in cannot give, is a stop:
