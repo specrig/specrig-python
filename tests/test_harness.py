@@ -223,6 +223,137 @@ def test_the_harness_fails_a_case_on_what_it_caught_and_lets_a_granted_class_be_
         assert results[name][0] == "passed", f"{name}: {results[name][1]}\n{out}"
 
 
+REFUSED = """Feature: Refused writes
+
+  Scenario: A table refusing its writes fails them, and a database that comes back takes them
+    Given billing accepts invoices
+    And the shop's orders refuse every write
+    When the customer places order 9 of 80
+    Then they are told something went wrong
+    And order 9 is gone
+    And the case's own write to the orders is refused
+    When the shop's database comes back
+    And the customer places order 9 of 80
+    Then order 9 of 80 is kept unpaid
+
+  Scenario: A table refusing its commits leaves no order behind
+    Given billing accepts invoices
+    And the shop's orders refuse every commit
+    When the customer places order 9 of 80
+    Then they are told something went wrong
+    And order 9 is gone
+    And billing is asked to invoice nothing
+
+  Scenario: A case starts with no table refusing
+    Given billing accepts invoices
+    When the customer places order 9 of 80
+    Then order 9 of 80 is kept unpaid
+"""
+
+REFUSED_STEPS = """import pytest
+from pytest_bdd import given, then, when
+from sqlalchemy.exc import DBAPIError
+
+from shop.db import Order, Session
+from specrig import Response
+from tests.internal.harness import Harness
+
+
+@given("the shop's orders refuse every write")
+def refuse(harness: Harness) -> None:
+    harness.database.refuse("orders")
+
+
+@given("the shop's orders refuse every commit")
+def refuse_commit(harness: Harness) -> None:
+    harness.database.refuse_commit("orders")
+
+
+@when("the shop's database comes back")
+def heal(harness: Harness) -> None:
+    harness.database.heal()
+
+
+@then("they are told something went wrong")
+def went_wrong(placed: Response) -> None:
+    assert placed.status == 500, placed.text
+
+
+@then("the case's own write to the orders is refused")
+def refused() -> None:
+    with pytest.raises(DBAPIError, match="specrig: insert on orders is refused"):
+        with Session.begin() as session:
+            session.add(Order(id=8, amount=1, paid=False))
+"""
+
+
+def test_a_fastapi_case_has_a_table_refuse_its_writes_and_gets_the_database_back(tmp_path: Path) -> None:
+    dir = sample("shop", tmp_path)
+    write(dir, {"tests/features/refused.feature": REFUSED, "tests/steps/refused.py": REFUSED_STEPS})
+
+    code, out, results = suite(dir, "-k", "refusing")
+
+    assert code == 0, out
+    assert sorted(results) == [
+        "test_a_case_starts_with_no_table_refusing",
+        "test_a_table_refusing_its_commits_leaves_no_order_behind",
+        "test_a_table_refusing_its_writes_fails_them_and_a_database_that_comes_back_takes_them",
+    ]
+
+
+REFUSED_DJANGO = """Feature: Refused writes
+
+  Scenario: A table refusing its writes fails the run, and a database that comes back takes it
+    Given billing holds an unpaid invoice of 120 for order 7, due yesterday
+    And billing accepts reminders
+    And the reminders' table refuses every write
+    When the reminders run, whatever comes of it
+    Then no reminder is noted for order 7
+    When the reminders' database comes back
+    And the reminders run
+    Then order 7 is noted as reminded of 120
+"""
+
+REFUSED_DJANGO_STEPS = """import pytest
+from pytest_bdd import given, then, when
+
+from reminders.jobs import send_reminders
+from reminders.models import Reminder
+from tests.internal.harness import Harness
+
+
+@given("the reminders' table refuses every write")
+def refuse(harness: Harness) -> None:
+    harness.database.refuse("reminders_reminder")
+
+
+@when("the reminders run, whatever comes of it")
+def run(harness: Harness) -> None:
+    with pytest.raises(Exception, match="specrig: insert on reminders_reminder is refused"):
+        harness.run(send_reminders)
+
+
+@when("the reminders' database comes back")
+def heal(harness: Harness) -> None:
+    harness.database.heal()
+
+
+@then("no reminder is noted for order 7")
+def none() -> None:
+    assert Reminder.objects.filter(order=7).count() == 0
+"""
+
+
+def test_a_django_case_has_a_table_refuse_its_writes_and_gets_the_database_back(tmp_path: Path) -> None:
+    dir = sample("reminders", tmp_path)
+    write(dir, {"tests/features/refused.feature": REFUSED_DJANGO, "tests/steps/refused.py": REFUSED_DJANGO_STEPS})
+
+    code, out, results = suite(dir, "-k", "refusing")
+
+    assert code == 0, out
+    assert sorted(results) == ["test_a_table_refusing_its_writes_fails_the_run_and_a_database_that_comes_back_takes_it"]
+
+
 def test_a_narrowed_run_writes_no_record_and_an_ignored_case_does_not_narrow_one(tmp_path: Path) -> None:
     dir = sample("shop", tmp_path)
     (dir / "tests/flows.yaml").unlink()

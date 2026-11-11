@@ -16,6 +16,8 @@ T = TypeVar("T")
 
 Query = Mapping[str, str | int | Sequence[str | int]]
 
+Headers = Mapping[str, str]
+
 
 @dataclass(frozen=True)
 class Received:
@@ -53,7 +55,7 @@ class Backend(StandIn):
         self.name = ""
         self._trace = Trace()
         self._checked: Contract | None = None
-        self._replies: dict[str, list[tuple[dict[str, list[str]], int, Any]]] = {}
+        self._replies: dict[str, list[tuple[dict[str, list[str]], int, Any, dict[str, str]]]] = {}
         self._timeouts: dict[str, list[dict[str, list[str]]]] = {}
         self._received: list[Received] = []
         self._unanswered: list[str] = []
@@ -78,14 +80,16 @@ class Backend(StandIn):
             )
         return failures
 
-    def reply(self, method: str, path: str, status: int, body: Any = None) -> None:
-        self.reply_to(method, path, {}, status, body)
+    def reply(self, method: str, path: str, status: int, body: Any = None, headers: Headers | None = None) -> None:
+        self.reply_to(method, path, {}, status, body, headers)
 
-    def reply_to(self, method: str, path: str, query: Query, status: int, body: Any = None) -> None:
+    def reply_to(
+        self, method: str, path: str, query: Query, status: int, body: Any = None, headers: Headers | None = None
+    ) -> None:
         key = f"{method.upper()} {path}"
         asked = _listed(query)
         kept = [r for r in self._replies.get(key, []) if r[0] != asked]
-        self._replies[key] = [*kept, (asked, status, copy.deepcopy(body))]
+        self._replies[key] = [*kept, (asked, status, copy.deepcopy(body), dict(headers or {}))]
 
     def time_out(self, method: str, path: str, query: Query | None = None) -> None:
         key = f"{method.upper()} {path}"
@@ -93,7 +97,7 @@ class Backend(StandIn):
         self._timeouts[key] = [*(q for q in self._timeouts.get(key, []) if q != asked), asked]
 
     def requests(self, method: str, path: str) -> list[Received]:
-        return [r for r in self._received if r.method == method.upper() and r.path == path]
+        return [r for r in self._received if r.method == method.upper() and _takes(path, r.path)]
 
     def answer(self, request: Request) -> Response:
         method = request.method.upper()
@@ -106,7 +110,7 @@ class Backend(StandIn):
             self._received.append(Received(method, path, asked, body))
             if self._checked is not None:
                 self._violations.extend(self._checked.request(method, path, body))
-            if _pick(self._timeouts.get(key, []), asked, lambda q: q) is not None:
+            if _pick(_declared(self._timeouts, method, path), asked, lambda q: q) is not None:
                 raise Unreachable(f"{self.name} did not answer {key} in time", timed_out=True)
             return self._fulfil(method, path, key + request.search(), asked)
         finally:
@@ -114,20 +118,40 @@ class Backend(StandIn):
             self._trace.end(call, "out", "http", name, body)
 
     def _fulfil(self, method: str, path: str, asked: str, query: dict[str, list[str]]) -> Response:
-        reply = _pick(self._replies.get(f"{method} {path}", []), query, lambda r: r[0])
+        reply = _pick(_declared(self._replies, method, path), query, lambda r: r[0])
         if reply is None:
             self._unanswered.append(asked)
             return _respond(501, {"code": "unanswered", "message": f"{method} {path}"})
-        _, status, body = reply
+        _, status, body, headers = reply
         if self._checked is not None:
             self._violations.extend(self._checked.response(method, path, status, {} if body is None else body))
-        return _respond(status, None if status == 204 else ({} if body is None else body))
+        return _respond(status, None if status == 204 else ({} if body is None else body), headers)
 
 
-def _respond(status: int, body: Any) -> Response:
+def _respond(status: int, body: Any, headers: Headers | None = None) -> Response:
+    given = dict(headers or {})
     if body is None:
-        return Response(status)
-    return Response(status, {"Content-Type": "application/json"}, http.encoded(body))
+        return Response(status, given)
+    typed = {} if "content-type" in {name.lower() for name in given} else {"Content-Type": "application/json"}
+    return Response(status, {**typed, **given}, http.encoded(body))
+
+
+def _declared(table: dict[str, list[T]], method: str, path: str) -> list[T]:
+    exact = table.get(f"{method} {path}")
+    if exact is not None:
+        return exact
+    prefix = f"{method} "
+    for key, found in table.items():
+        if key.startswith(prefix) and _takes(key[len(prefix) :], path):
+            return found
+    return []
+
+
+def _takes(template: str, path: str) -> bool:
+    segments, wanted = template.split("/"), path.split("/")
+    return len(segments) == len(wanted) and all(
+        (s.startswith("{") and s.endswith("}")) or s == w for s, w in zip(segments, wanted, strict=True)
+    )
 
 
 def _pick(candidates: list[T], query: dict[str, list[str]], of: Callable[[T], dict[str, list[str]]]) -> T | None:

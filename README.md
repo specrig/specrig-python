@@ -213,10 +213,10 @@ fixtures, autouse ones included, would change the service the cases see.
 
 | | |
 |---|---|
-| `harness.<backend>.reply(method, path, status, body)` | what the neighbour answers |
-| `harness.<backend>.reply_to(method, path, query, status, body)` | the same, for a request whose query has these values; the reply naming the most of them wins |
+| `harness.<backend>.reply(method, path, status, body, headers)` | what the neighbour answers; `headers`, strings to strings, are added to the response the client sees. A segment in braces, `/orders/{id}`, takes any one segment, the exact path wins over a template and the first declared of two templates over the second — in every call here that names a path |
+| `harness.<backend>.reply_to(method, path, query, status, body, headers)` | the same, for a request whose query has these values; the reply naming the most of them wins |
 | `harness.<backend>.time_out(method, path, query=None)` | the neighbour does not answer in time: the client meets the timeout it would meet, at once |
-| `harness.<backend>.requests(method, path)` | what reached the neighbour: `method`, `path`, `query` and `json`, its decoded body |
+| `harness.<backend>.requests(method, path)` | what reached the neighbour: `method`, `path`, `query` and `json`, its decoded body; a template returns the requests it takes |
 | `harness.http()` | a client of the service's own stack: `get`, `post`, `put`, `patch`, `delete`, `send`; a response with `status`, `headers`, `text`, `json()` |
 | `harness.run(job, *args, **kwargs)` | a job — see below |
 | `harness.command(name, *args)` | a command of the service's console; returns its exit code, and `harness.output` what it wrote |
@@ -225,6 +225,10 @@ fixtures, autouse ones included, would change the service the cases see.
 | `harness.logs` | what the service logged, under its real logging configuration |
 | `harness.clock` | the service's clock: the wall clock until a step calls `set()`, then `advance()` |
 | `harness.<resource>.fail_with(error=None)` | the resource goes down for the service — see Postgres and Redis |
+| `harness.<postgres>.refuse(table, *writes)` | every insert, update and delete on the table, or those given, fails in Postgres itself, whoever sends it; reads go on working — see Postgres |
+| `harness.<postgres>.refuse_after(table, rows, *writes)` | the same after the first `rows` rows |
+| `harness.<postgres>.refuse_commit(table, *writes)` | the statements go through, and the commit of a transaction that wrote the table fails |
+| `harness.<postgres>.heal()` | the database comes back: `fail_with` and every refusal end, and the rows stay |
 | `harness.application` | FastAPI: the app the case runs |
 
 The service boots at the first step that reaches it, so a `Given` declares and
@@ -241,7 +245,8 @@ every request and every answer is checked against the neighbour's contract: an
 unknown route or method, an undocumented status, or a body of the wrong shape
 fails it. So does a request the service sends past the stand-ins — through
 `urllib`, or `aiohttp` reading the proxy from the environment —, which the
-harness's proxy refused.
+harness's proxy refused. A path template in a step changes nothing there: the
+check and the records start from the path the request came with.
 
 A step's request returns when the service has answered it and done everything
 the request made it do, background tasks included: nothing is in flight between
@@ -367,6 +372,23 @@ meets its driver's own exception. An error given instead fails every statement
 with it — through SQLAlchemy's events, or Django's execute wrappers. A fault a
 step sets before the boot waits for the service to start, so the migration and
 the start go through; the next case starts whole.
+
+`harness.database.refuse("orders")` makes Postgres refuse one table's writes —
+every insert, update and delete, or only those named, `Write.INSERT`,
+`Write.UPDATE`, `Write.DELETE` — with `specrig: insert on orders is refused`. A
+trigger refuses, not the service's driver, so every connection meets it, the
+case's own included, and a write in `RETURNING` or a CTE as well as a plain one;
+reads and the other tables go on working, so a case can check what the failed
+write left behind. The table is `orders` or `schema.orders`. `refuse_after("orders",
+1)` lets that many rows through first, and a rolled-back row gives its place back.
+`refuse_commit("orders")` lets every statement through and fails the commit of a
+transaction that wrote the table, for a case about what gets out before the commit.
+A refusal set before the boot waits for the service to start, as a fault does.
+`heal()` is the database coming back in the middle of a case: it ends `fail_with`
+and every refusal and keeps the rows. The reset before every case lifts the
+refusals, before it writes the rows back. They live in a schema of their own,
+`specrig_refusal`, which the reset's discovery and the `specrig_baseline` copy never
+see.
 
 ## Redis
 

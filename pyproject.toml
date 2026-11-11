@@ -44,6 +44,7 @@ Protocol = "https://github.com/specrig/protocol"
 dev = [
     "alembic>=1.16",
     "httpx>=0.27",
+    "httpx2>=2.0",
     "psycopg[binary]>=3.2",
     "pydantic-settings>=2.8",
     "redis>=5.0",

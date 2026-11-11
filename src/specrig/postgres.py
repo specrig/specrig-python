@@ -6,6 +6,7 @@ import threading
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qsl, quote, unquote, urlencode, urlsplit
 
@@ -19,6 +20,38 @@ if TYPE_CHECKING:
 
 _MARK = "specrig "
 _BASELINE = "specrig_baseline"
+_REFUSAL = "specrig_refusal"
+
+_REFUSAL_SETUP = f"""
+CREATE SCHEMA IF NOT EXISTS {_REFUSAL};
+CREATE TABLE IF NOT EXISTS {_REFUSAL}.quota (
+    relation oid,
+    name text,
+    remaining int NOT NULL,
+    PRIMARY KEY (relation, name)
+);
+CREATE OR REPLACE FUNCTION {_REFUSAL}.refuse() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+    rest int;
+BEGIN
+    UPDATE {_REFUSAL}.quota SET remaining = remaining - 1
+    WHERE relation = tg_relid AND name = tg_name
+    RETURNING remaining INTO rest;
+    IF rest < 0 THEN
+        RAISE EXCEPTION 'specrig: % on % is refused', lower(tg_op), tg_table_name;
+    END IF;
+    IF tg_op = 'DELETE' THEN
+        RETURN old;
+    END IF;
+    RETURN new;
+END $$;
+"""
+
+
+class Write(StrEnum):
+    INSERT = "insert"
+    UPDATE = "update"
+    DELETE = "delete"
 
 
 @dataclass(frozen=True)
@@ -176,7 +209,34 @@ class _Server:
                     stood = connection.execute(f"SELECT last_value, is_called FROM {sequence}").fetchone()
                     self._sequences.append((sequence, *stood))
 
+    def refuse(self, table: str, rows: int, events: Sequence[str], commit: bool) -> None:
+        relation = ".".join(_quoted(part) for part in table.split("."))
+        name = "specrig_refuse_" + ("commit_" if commit else "") + "_".join(events)
+        on = " OR ".join(events)
+        trigger = (
+            f"CREATE CONSTRAINT TRIGGER {name} AFTER {on} ON {relation} DEFERRABLE INITIALLY DEFERRED FOR EACH ROW"
+            if commit
+            else f"CREATE TRIGGER {name} BEFORE {on} ON {relation} FOR EACH ROW"
+        )
+        connection = self._connected()
+        try:
+            with connection.transaction():
+                connection.execute(_REFUSAL_SETUP)
+                connection.execute(
+                    f"INSERT INTO {_REFUSAL}.quota (relation, name, remaining) VALUES (%s::regclass, %s, %s)"
+                    " ON CONFLICT (relation, name) DO UPDATE SET remaining = excluded.remaining",
+                    (relation, name, rows),
+                )
+                connection.execute(f"DROP TRIGGER IF EXISTS {name} ON {relation}")
+                connection.execute(f"{trigger} EXECUTE FUNCTION {_REFUSAL}.refuse()")
+        except Exception as e:
+            raise RuntimeError(f"cannot refuse writes to {table}: {e}") from e
+
+    def lift(self) -> None:
+        self._connected().execute(f"DROP SCHEMA IF EXISTS {_REFUSAL} CASCADE")
+
     def reset(self, keep: Sequence[str]) -> None:
+        self.lift()
         tables = [f"{_quoted(schema)}.{_quoted(table)}" for schema, table in self._tables(keep)]
         if not tables:
             return
@@ -196,8 +256,8 @@ class _Server:
     def _tables(self, keep: Sequence[str]) -> list[tuple[str, str]]:
         found = self._connected().execute(
             "SELECT schemaname, tablename FROM pg_tables"
-            " WHERE schemaname NOT IN ('pg_catalog', 'information_schema', %s) ORDER BY 1, 2",
-            (_BASELINE,),
+            " WHERE schemaname NOT IN ('pg_catalog', 'information_schema', %s, %s) ORDER BY 1, 2",
+            (_BASELINE, _REFUSAL),
         )
         return [(schema, table) for schema, table in found.fetchall() if table not in keep]
 
@@ -236,6 +296,7 @@ class Postgres(Resource):
         self._started = False
         self._refusing = False
         self._error: BaseException | None = None
+        self._refusals: list[Callable[[], None]] = []
 
     def fresh(self) -> Postgres:
         return Postgres(self.setting, self._given, self._image, self._keep, self._scheme)
@@ -269,15 +330,45 @@ class Postgres(Resource):
         if self._started:
             self._apply()
 
+    def refuse(self, table: str, *writes: Write) -> None:
+        self.refuse_after(table, 0, *writes)
+
+    def refuse_after(self, table: str, rows: int, *writes: Write) -> None:
+        self._refuse(table, rows, writes, False)
+
+    def refuse_commit(self, table: str, *writes: Write) -> None:
+        self._refuse(table, 0, writes, True)
+
+    def heal(self) -> None:
+        self._calm()
+        if self._started:
+            self._held().lift()
+
     def release(self) -> None:
+        self._calm()
+        self._rig = None
+        self._started = False
+
+    def _calm(self) -> None:
         if self._server is not None:
             self._server.gate.reopen()
         if self._rig is not None and (self._refusing or self._error is not None):
             self._rig.databases().heal()
-        self._rig = None
-        self._started = False
         self._refusing = False
         self._error = None
+        self._refusals = []
+
+    def _refuse(self, table: str, rows: int, writes: Sequence[Write], commit: bool) -> None:
+        events = _events(writes)
+
+        def refusal() -> None:
+            self._held().refuse(table, rows, events, commit)
+
+        # Before the start the schema may not exist, and the reset would lift it.
+        if self._started:
+            refusal()
+        else:
+            self._refusals.append(refusal)
 
     def _apply(self) -> None:
         assert self._rig is not None
@@ -285,6 +376,9 @@ class Postgres(Resource):
             self._held().gate.refuse()
         if self._error is not None:
             self._rig.databases().fail(self._held().database, self._error)
+        refusals, self._refusals = self._refusals, []
+        for refusal in refusals:
+            refusal()
 
     def _of(self, service: str) -> _Server:
         if self._server is None:
@@ -325,6 +419,16 @@ def _sweep(connection: Any, stem: str) -> None:
     for name, mark, connected in found.fetchall():
         if ours.match(name) and connected == 0 and mark.startswith(_MARK) and int(mark[len(_MARK) :] or 0) < hour_ago:
             connection.execute(f"DROP DATABASE IF EXISTS {_quoted(name)} WITH (FORCE)")
+
+
+def _events(writes: Sequence[str]) -> list[str]:
+    given = []
+    for write in writes:
+        try:
+            given.append(Write(write))
+        except ValueError:
+            raise ValueError(f"specrig: {write!r} is not a write, refuse an insert, update or delete") from None
+    return [write.value for write in Write if not given or write in given]
 
 
 def _quoted(name: str) -> str:

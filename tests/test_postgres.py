@@ -6,7 +6,7 @@ from urllib.parse import urlsplit
 import psycopg
 import pytest
 
-from specrig import Postgres
+from specrig import Postgres, Write
 
 pytestmark = pytest.mark.skipif(shutil.which("docker") is None, reason="postgres starts in Docker")
 
@@ -46,11 +46,14 @@ class Harness:
         self.database = Postgres("DATABASE_URL", address, keep=keep)
         self.address = self.database.bind(service)
         self.schema = schema
+        self.failure: BaseException | None = None
+        self.healed = 0
         self.database.provision()
 
     def case(self) -> None:
         self.database.release()
         self.database.ready(self)
+        self.database.started()
 
     def databases(self) -> Self:
         return self
@@ -61,10 +64,22 @@ class Harness:
     def bookkeeping(self) -> list[str]:
         return []
 
+    def fail(self, database: str, error: BaseException) -> None:
+        self.failure = error
+
+    def heal(self) -> None:
+        self.failure = None
+        self.healed += 1
+
     def sql(self, statement: str) -> list[Any]:
         with psycopg.connect(self.address, autocommit=True) as connection:
             done = connection.execute(statement)
             return [row[0] for row in done.fetchall()] if done.description else []
+
+    def refused(self, statement: str) -> str:
+        with pytest.raises(psycopg.Error) as raised:
+            self.sql(statement)
+        return raised.value.diag.message_primary or ""
 
 
 def migrated(service: str, schema: str = SEEDED, keep: Sequence[str] = ()) -> Harness:
@@ -195,3 +210,193 @@ def test_rows_to_write_back_without_a_superuser_fail_the_migration() -> None:
             RuntimeError, match="did not migrate: putting back the rows the migrations left needs a superuser"
         ):
             harness.case()
+
+
+def test_a_refused_table_refuses_every_write_and_reads_go_on() -> None:
+    harness = migrated("refuse_all")
+
+    harness.database.refuse("vendors")
+
+    assert harness.refused("insert into vendors (state_id, name) values (1, 'R2')") == (
+        "specrig: insert on vendors is refused"
+    )
+    assert harness.refused("update vendors set name = 'renamed'") == "specrig: update on vendors is refused"
+    assert harness.refused("delete from vendors") == "specrig: delete on vendors is refused"
+    assert harness.refused("insert into vendors (state_id, name) values (1, 'R2') returning id").endswith("is refused")
+    assert harness.sql("select name from vendors") == ["R1"]
+
+
+def test_a_refusal_leaves_the_other_tables_alone() -> None:
+    harness = migrated("refuse_elsewhere")
+
+    harness.database.refuse("vendors")
+
+    harness.sql("insert into states (name) values ('extra')")
+    assert harness.sql("select name from states order by id")[-1] == "extra"
+
+
+def test_a_refusal_leaves_the_writes_it_does_not_name_alone() -> None:
+    harness = migrated("refuse_named")
+
+    harness.database.refuse("vendors", Write.DELETE)
+
+    harness.sql("update vendors set name = 'renamed'")
+    harness.sql("insert into vendors (state_id, name) values (1, 'R2')")
+    assert harness.refused("delete from vendors") == "specrig: delete on vendors is refused"
+    assert harness.sql("select name from vendors order by id") == ["renamed", "R2"]
+
+
+def test_a_table_in_a_schema_of_its_own_is_refused_by_its_qualified_name() -> None:
+    harness = migrated("refuse_qualified")
+
+    harness.database.refuse("billing.invoices")
+
+    assert harness.refused("insert into billing.invoices (vendor_id) values (1)") == (
+        "specrig: insert on invoices is refused"
+    )
+
+
+def test_a_quota_lets_that_many_rows_through() -> None:
+    harness = migrated("refuse_after")
+
+    harness.database.refuse_after("states", 1)
+
+    harness.sql("insert into states (name) values ('first')")
+    assert harness.refused("insert into states (name) values ('second')") == "specrig: insert on states is refused"
+    assert harness.sql("select name from states order by id")[-1] == "first"
+
+
+def test_a_delete_within_the_quota_deletes() -> None:
+    harness = migrated("refuse_after_delete")
+
+    harness.database.refuse_after("categories", 1, Write.DELETE)
+
+    harness.sql("delete from categories where parent_id is not null")
+    assert harness.sql("select name from categories") == ["Master"]
+
+
+def test_a_rolled_back_row_gives_its_place_back() -> None:
+    harness = migrated("refuse_rolled_back")
+    harness.database.refuse_after("states", 1)
+
+    with psycopg.connect(harness.address) as connection:
+        connection.execute("insert into states (name) values ('undone')")
+        connection.rollback()
+
+    harness.sql("insert into states (name) values ('kept')")
+    assert harness.sql("select name from states order by id")[-1] == "kept"
+
+
+def test_refusing_again_replaces_the_quota() -> None:
+    harness = migrated("refuse_again")
+    harness.database.refuse("states")
+
+    harness.database.refuse_after("states", 1)
+
+    harness.sql("insert into states (name) values ('first')")
+
+
+def test_a_commit_refusal_lets_the_statements_through_and_fails_the_commit() -> None:
+    harness = migrated("refuse_commit")
+    harness.database.refuse_commit("states")
+
+    with psycopg.connect(harness.address) as connection:
+        connection.execute("insert into states (name) values ('extra')")
+        with pytest.raises(psycopg.Error, match="specrig: insert on states is refused"):
+            connection.commit()
+
+    assert harness.sql("select name from states order by id") == ["new", "active", "closed"]
+
+
+def test_a_commit_refusal_leaves_a_transaction_that_did_not_write_the_table_alone() -> None:
+    harness = migrated("refuse_commit_elsewhere")
+    harness.database.refuse_commit("states")
+
+    with psycopg.connect(harness.address) as connection:
+        connection.execute("select name from states")
+        connection.execute("insert into vendors (state_id, name) values (1, 'R2')")
+
+    assert harness.sql("select name from vendors order by id") == ["R1", "R2"]
+
+
+def test_heal_lifts_the_refusals_and_the_gate_and_keeps_the_rows() -> None:
+    harness = migrated("refuse_heal")
+    harness.sql("insert into states (name) values ('extra')")
+    harness.database.refuse("vendors")
+    harness.database.fail_with()
+    with pytest.raises(psycopg.OperationalError):
+        harness.sql("select 1")
+
+    harness.database.heal()
+
+    harness.sql("insert into vendors (state_id, name) values (1, 'R2')")
+    assert harness.sql("select name from states order by id") == ["new", "active", "closed", "extra"]
+    assert harness.healed == 1
+
+
+def test_heal_ends_an_error_given_to_fail_with() -> None:
+    harness = migrated("refuse_heal_error")
+    harness.database.fail_with(RuntimeError("the disk is full"))
+    assert harness.failure is not None
+
+    harness.database.heal()
+
+    assert harness.failure is None
+
+
+def test_a_refusal_set_before_the_service_starts_waits_for_it() -> None:
+    harness = migrated("refuse_late")
+    harness.database.release()
+    harness.database.refuse("vendors")
+
+    harness.database.ready(harness)
+    harness.sql("insert into vendors (state_id, name) values (1, 'R2')")
+    harness.database.started()
+
+    assert harness.refused("insert into vendors (state_id, name) values (1, 'R3')") == (
+        "specrig: insert on vendors is refused"
+    )
+
+
+def test_a_healed_refusal_does_not_wait_for_the_service_to_start() -> None:
+    harness = migrated("refuse_late_heal")
+    harness.database.release()
+    harness.database.refuse("vendors")
+
+    harness.database.heal()
+    harness.database.ready(harness)
+    harness.database.started()
+
+    harness.sql("insert into vendors (state_id, name) values (1, 'R2')")
+
+
+def test_the_reset_before_a_case_lifts_the_refusals() -> None:
+    harness = migrated("refuse_reset")
+    harness.database.refuse("vendors")
+    harness.database.refuse_commit("states")
+
+    harness.case()
+
+    harness.sql("insert into vendors (state_id, name) values (1, 'R2')")
+    assert harness.sql("select count(*) from pg_namespace where nspname = 'specrig_refusal'") == [0]
+
+
+def test_the_refusals_are_no_table_of_the_service() -> None:
+    harness = migrated("refuse_hidden")
+
+    harness.database.refuse("vendors")
+
+    assert harness.sql("select count(*) from specrig_refusal.quota") == [1]
+    assert all(schema != "specrig_refusal" for schema, _ in harness.database._held()._tables(()))
+
+
+def test_only_a_write_can_be_refused() -> None:
+    with pytest.raises(ValueError, match="'truncate' is not a write, refuse an insert, update or delete"):
+        Postgres("DATABASE_URL").refuse("vendors", "truncate")  # type: ignore[arg-type]
+
+
+def test_a_table_there_is_none_of_is_no_refusal() -> None:
+    harness = migrated("refuse_nowhere")
+
+    with pytest.raises(RuntimeError, match="cannot refuse writes to nowhere"):
+        harness.database.refuse("nowhere")

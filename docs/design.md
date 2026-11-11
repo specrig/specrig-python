@@ -82,7 +82,7 @@ flight between steps, and `time_out` stands in for a slow neighbour, as in PHP.
 | clock | `time-machine`, from the step that sets it | the same |
 | logs | a handler on the root logger, beside the service's | the same |
 | grants | `replace(name, instance)`: the name replaced in every module of the service that holds it, and in FastAPI's `dependency_overrides` | the name replaced in every module that holds it |
-| Postgres | `alembic upgrade head` once per run, in a process of its own, and the rows it wrote kept aside; before every case every table but `alembic_version` and `keep` truncated and those rows written back, with the sequences where they stood; a refusal by the gate, an error by SQLAlchemy's `before_cursor_execute` | `migrate` once per run, and the rows it wrote kept aside; every table but Django's bookkeeping and `keep` truncated and those rows written back; an error by the connections' execute wrappers |
+| Postgres | `alembic upgrade head` once per run, in a process of its own, and the rows it wrote kept aside; before every case every table but `alembic_version` and `keep` truncated and those rows written back, with the sequences where they stood; a refusal by the gate, an error by SQLAlchemy's `before_cursor_execute`, a table's writes by triggers in a schema of their own | `migrate` once per run, and the rows it wrote kept aside; every table but Django's bookkeeping and `keep` truncated and those rows written back; an error by the connections' execute wrappers; a table's writes by the same triggers |
 | Redis | `FLUSHDB` before every case; a refusal by the gate | the same |
 | steps | pytest-bdd: a plugin of `pytest11` marks Given, When and Then, fails a case on what the harness found, and writes `tests/flows.yaml` after a whole run | |
 | `tests/surface.yaml` | Python's `ast` over the service's modules: routes from FastAPI's decorators and routers | routes from the `ROOT_URLCONF` and the views' methods |
@@ -124,11 +124,29 @@ at import, in a lifespan, inside a job — so the stand-ins sit where every clie
 sends: `httpx`'s `HTTPTransport` and `AsyncHTTPTransport`, the same in `httpx2`,
 and `requests`' `HTTPAdapter`. Every other client meets the proxy.
 
+**A template names what a step answers, not what the service sent.** As in
+specrig-js, a path segment in braces takes any one segment, the exact path wins,
+and of two templates the first declared; `reply`, `reply_to`, `time_out` and
+`requests` all take one. The contract check and the trace go on naming a request
+by the path it came with, so a template that matches too much is not hidden by
+the contract it is checked against. A reply's headers are added to the response
+as the transports hand it to the client, so `httpx`, `httpx2` and `requests` see
+them alike.
+
 **A gate, not an address.** PHP points a refused connection at a port where
 nothing listens, which works because the application is built anew for every
 case. Here the engine was built at import, with the address it was given, so the
 address is a gate on loopback that the case opens and closes: a refusal reaches
 every connection the service holds and every one it makes, whatever its driver.
+
+**Triggers, not hooks, for a refused table.** Ported from gorib's `sqltest`: a
+trigger refuses in Postgres itself, so every connection meets it — the service's,
+a job's, the case's own — and the service meets the driver's own exception, where
+a hook in SQLAlchemy or Django reaches only the clients that go through it. The
+triggers, and the quota that lets `refuse_after`'s rows through, live in a
+`specrig_refusal` schema, outside the tables the reset truncates and the baseline
+copies, and the reset drops it first. A refusal a step sets before the boot waits
+for the start, since the reset would lift it and the schema may not exist yet.
 
 **Alembic in a process of its own.** Alembic's `env.py` configures logging as it
 runs, disabling the loggers the service already made; production runs the
@@ -168,5 +186,5 @@ libraries.
 | 0 | the records and the fixtures | built |
 | 1 | boot, settings, HTTP stand-ins and the contract check, the pytest-bdd binding, Postgres, logs, the clock; HTTP, jobs and commands as ways in; `tests/flows.yaml` | built |
 | 2 | `tests/surface.yaml` and `tests/checks.yaml`, `init`, `rules`, `specrig.md` | built |
-| 3 | Redis, grants, `fail_with` | built |
+| 3 | Redis, grants, `fail_with`, a refused table and `heal`, reply headers and path templates | built |
 | 4 | a bus and a queue | not started |

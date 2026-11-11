@@ -395,8 +395,9 @@ sessions; a `Then` reads back through them, not out of the answer.
 `tests/steps/` takes it as the `harness` fixture, with an attribute for each
 neighbour `harness.py` names:
 
-- `harness.<neighbour>.reply(method, path, status, body)` — what the neighbour
-  answers;
+- `harness.<neighbour>.reply(method, path, status, body, headers)` — what the
+  neighbour answers; a segment in braces, `/orders/{id}`, takes any value here and in
+  every call below, and the exact path wins;
 - `harness.<neighbour>.reply_to(method, path, query, status, body)` — the same, for a
   request whose query has these values;
 - `harness.<neighbour>.time_out(method, path)` — the neighbour not answering in time;
@@ -405,6 +406,14 @@ neighbour `harness.py` names:
 
 A call to a neighbour no step answered fails the case, and so does a request to an
 origin `harness.py` does not name — it is refused before it leaves.
+
+**An outage is not a replacement.** `harness.<resource>.fail_with()` takes the
+database or the cache away until the next case. A write that fails halfway is not an
+outage: `harness.<database>.refuse(table)` makes one table refuse writes,
+`refuse_after(table, rows)` lets that many rows through first, and reads keep working,
+so a `Then` can check what the failed write left; `refuse_commit(table)` fails only
+the commit. `heal()` is the database coming back: it ends the fault and every refusal
+and keeps the rows.
 
 **What may be stood in for is given, not chosen.** `tests/internal/` is read-only. A
 case that needs another neighbour, or an answer the stand-in cannot give, is a stop:
