@@ -68,11 +68,11 @@ def test_a_loop_is_one_pass_whatever_the_number_of_items() -> None:
 
 def test_a_record_of_a_newer_version_is_refused(tmp_path: Path) -> None:
     file = tmp_path / "flows.yaml"
-    file.write_text("specrig: flows/2\nservice: shop\n")
+    file.write_text("specrig: flows/3\nservice: shop\n")
 
     try:
         flows.read(file)
     except ValueError as e:
-        assert "flows/2" in str(e)
+        assert "flows/3" in str(e)
     else:
-        raise AssertionError("a record of flows/2 was read")
+        raise AssertionError("a record of flows/3 was read")

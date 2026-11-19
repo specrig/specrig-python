@@ -8,7 +8,7 @@ from typing import Any
 from . import _yaml
 from .records import Run
 
-FORMAT = "flows/1"
+FORMAT = "flows/2"
 
 _HEADER = (
     "# Generated from the component suite by specrig: every whole run rewrites the\n"
@@ -223,8 +223,9 @@ def read(file: Path) -> Doc | None:
     if not isinstance(data, dict):
         return None
     version = str(data.get("specrig", FORMAT))
-    if version != FORMAT:
-        raise ValueError(f"{file} is {version}, and this writer reads {FORMAT}")
+    kind, _, n = version.partition("/")
+    if kind != "flows" or not n.isdigit() or not 1 <= int(n) <= int(FORMAT.partition("/")[2]):
+        raise ValueError(f"{file} is {version}, and this writer reads up to {FORMAT}")
     doc = Doc(str(data.get("service", "")), version)
     for raw in data.get("inputs") or []:
         input = Input(str(raw["message"]), raw.get("description"), raw.get("fields"), raw.get("needs"))

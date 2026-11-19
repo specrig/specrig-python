@@ -1,0 +1,60 @@
+[
+  {
+    "case": "quotes.feature: Every carrier quotes the shipment",
+    "records": [
+      { "seq": 1, "dir": "in", "kind": "grpc", "name": "/freight.Quotes/Create", "step": "Action", "request": { "shipment": 5 }, "threads": [1] },
+      { "seq": 2, "dir": "out", "kind": "http", "name": "GET /workday", "step": "Action", "threads": [2, 1] },
+      { "seq": 3, "dir": "out", "kind": "http", "name": "POST /rates", "step": "Action", "threads": [6, 4, 2, 1] },
+      { "seq": 4, "dir": "out", "kind": "http", "name": "POST /rates", "step": "Action", "threads": [5, 3, 2, 1] },
+      { "seq": 5, "dir": "out", "kind": "http", "name": "POST /rates", "step": "Action", "threads": [7, 4, 2, 1] },
+      { "seq": 6, "dir": "out", "kind": "http", "name": "GET /codes", "step": "Action", "threads": [7, 4, 2, 1] },
+      { "seq": 7, "dir": "out", "kind": "http", "name": "GET /codes", "step": "Action", "threads": [5, 3, 2, 1] },
+      { "seq": 8, "dir": "out", "kind": "http", "name": "GET /codes", "step": "Action", "threads": [6, 4, 2, 1] },
+      { "seq": 9, "dir": "out", "kind": "http", "name": "GET /currency", "step": "Action", "threads": [4, 2, 1] }
+    ]
+  },
+  {
+    "case": "quotes.feature: The carriers answer in another order",
+    "records": [
+      { "seq": 1, "dir": "in", "kind": "grpc", "name": "/freight.Quotes/Create", "step": "Action", "request": { "shipment": 5 }, "threads": [10] },
+      { "seq": 2, "dir": "out", "kind": "http", "name": "GET /workday", "step": "Action", "threads": [11, 10] },
+      { "seq": 3, "dir": "out", "kind": "http", "name": "POST /rates", "step": "Action", "threads": [15, 13, 11, 10] },
+      { "seq": 4, "dir": "out", "kind": "http", "name": "POST /rates", "step": "Action", "threads": [14, 12, 11, 10] },
+      { "seq": 5, "dir": "out", "kind": "http", "name": "GET /codes", "step": "Action", "threads": [14, 12, 11, 10] },
+      { "seq": 6, "dir": "out", "kind": "http", "name": "POST /rates", "step": "Action", "threads": [16, 13, 11, 10] },
+      { "seq": 7, "dir": "out", "kind": "http", "name": "GET /codes", "step": "Action", "threads": [16, 13, 11, 10] },
+      { "seq": 8, "dir": "out", "kind": "http", "name": "GET /codes", "step": "Action", "threads": [15, 13, 11, 10] },
+      { "seq": 9, "dir": "out", "kind": "http", "name": "GET /currency", "step": "Action", "threads": [13, 11, 10] }
+    ]
+  },
+  {
+    "case": "quotes.feature: One carrier quotes the shipment",
+    "records": [
+      { "seq": 1, "dir": "in", "kind": "grpc", "name": "/freight.Quotes/Create", "step": "Action", "request": { "shipment": 5 }, "threads": [20] },
+      { "seq": 2, "dir": "out", "kind": "http", "name": "GET /workday", "step": "Action", "threads": [21, 20] },
+      { "seq": 3, "dir": "out", "kind": "http", "name": "POST /rates", "step": "Action", "threads": [23, 22, 21, 20] },
+      { "seq": 4, "dir": "out", "kind": "http", "name": "GET /codes", "step": "Action", "threads": [23, 22, 21, 20] }
+    ]
+  },
+  {
+    "case": "quotes.feature: Two carriers quote alike",
+    "records": [
+      { "seq": 1, "dir": "in", "kind": "grpc", "name": "/freight.Quotes/Create", "step": "Action", "request": { "shipment": 5 }, "threads": [30] },
+      { "seq": 2, "dir": "out", "kind": "http", "name": "GET /workday", "step": "Action", "threads": [31, 30] },
+      { "seq": 3, "dir": "out", "kind": "http", "name": "POST /rates", "step": "Action", "threads": [34, 32, 31, 30] },
+      { "seq": 4, "dir": "out", "kind": "http", "name": "POST /rates", "step": "Action", "threads": [35, 33, 31, 30] },
+      { "seq": 5, "dir": "out", "kind": "http", "name": "GET /codes", "step": "Action", "threads": [35, 33, 31, 30] },
+      { "seq": 6, "dir": "out", "kind": "http", "name": "GET /codes", "step": "Action", "threads": [34, 32, 31, 30] }
+    ]
+  },
+  {
+    "case": "quotes.feature: A cancelled quote is refunded",
+    "records": [
+      { "seq": 1, "dir": "in", "kind": "grpc", "name": "/freight.Quotes/Cancel", "step": "Action", "threads": [40] },
+      { "seq": 2, "dir": "out", "kind": "http", "name": "DELETE /reservations", "step": "Action", "threads": [40] },
+      { "seq": 3, "dir": "out", "kind": "http", "name": "POST /refunds", "step": "Action", "threads": [42, 41] },
+      { "seq": 4, "dir": "out", "kind": "event", "name": "quotes.cancelled", "step": "Action", "threads": [43] },
+      { "seq": 5, "dir": "out", "kind": "http", "name": "GET /quotes/{id}", "step": "Action", "threads": [40] }
+    ]
+  }
+]

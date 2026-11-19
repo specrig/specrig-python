@@ -1,0 +1,34 @@
+# Generated from the component suite by specrig: every whole run rewrites the
+# structure; only the description fields are yours.
+specrig: flows/2
+service: storefront
+inputs:
+  - message: ui the visitor opens the shop
+    branches:
+      - sends:
+          - together:
+              - - http GET /images/{id}
+              - - http GET /prices
+        cases:
+          - "shop.feature: Every picture is asked for"
+      - sends:
+          - together:
+              - - http GET /prices
+              - - http GET /stock
+          - http GET /cart
+        cases:
+          - "shop.feature: Prices answer first"
+          - "shop.feature: Stock answers first"
+  - message: ui the visitor saves the cart
+    branches:
+      - sends:
+          - http PUT /cart
+          - http GET /cart
+        cases:
+          - "shop.feature: The cart is saved and read again"
+outputs:
+  - message: http GET /cart
+  - message: http GET /images/{id}
+  - message: http GET /prices
+  - message: http GET /stock
+  - message: http PUT /cart

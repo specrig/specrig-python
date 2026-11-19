@@ -500,7 +500,7 @@ its gate, as Postgres's.
 ## The records
 
 Both are specrig's format and say so first — `specrig: surface/1`,
-`specrig: flows/1` — so that `specrig-flows` finds the service by them and reads
+`specrig: flows/2` — so that `specrig-flows` finds the service by them and reads
 them beside the others; the protocol's `records.md` is what every writer
 agrees on, and its fixtures run here in `tests/test_format.py`. Each is rewritten
 by what has its source, and nothing compares it on the way: a project that

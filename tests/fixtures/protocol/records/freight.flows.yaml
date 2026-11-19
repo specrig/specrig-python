@@ -1,0 +1,46 @@
+# Generated from the component suite by specrig: every whole run rewrites the
+# structure; only the description fields are yours.
+specrig: flows/2
+service: freight
+inputs:
+  - message: grpc /freight.Quotes/Cancel
+    branches:
+      - sends:
+          - http DELETE /reservations
+          - together:
+              - - event quotes.cancelled
+              - - http POST /refunds
+          - http GET /quotes/{id}
+        cases:
+          - "quotes.feature: A cancelled quote is refunded"
+  - message: grpc /freight.Quotes/Create
+    fields:
+      - shipment
+    branches:
+      - sends:
+          - http GET /workday
+          - together:
+              - - http POST /rates
+                - http GET /codes
+              - - http POST /rates
+                - http GET /codes
+                - http GET /currency
+        cases:
+          - "quotes.feature: Every carrier quotes the shipment"
+          - "quotes.feature: The carriers answer in another order"
+      - sends:
+          - http GET /workday
+          - http POST /rates
+          - http GET /codes
+        cases:
+          - "quotes.feature: One carrier quotes the shipment"
+          - "quotes.feature: Two carriers quote alike"
+outputs:
+  - message: event quotes.cancelled
+  - message: http DELETE /reservations
+  - message: http GET /codes
+  - message: http GET /currency
+  - message: http GET /quotes/{id}
+  - message: http GET /workday
+  - message: http POST /rates
+  - message: http POST /refunds

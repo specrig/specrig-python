@@ -1,0 +1,37 @@
+[
+  {
+    "case": "shop.feature: Prices answer first",
+    "records": [
+      { "seq": 1, "dir": "in", "kind": "ui", "name": "the visitor opens the shop", "step": "Action" },
+      { "seq": 2, "dir": "out", "kind": "http", "name": "GET /prices", "step": "Action", "round": 0 },
+      { "seq": 3, "dir": "out", "kind": "http", "name": "GET /stock", "step": "Action", "round": 0 },
+      { "seq": 4, "dir": "out", "kind": "http", "name": "GET /cart", "step": "Action", "round": 1 }
+    ]
+  },
+  {
+    "case": "shop.feature: Stock answers first",
+    "records": [
+      { "seq": 1, "dir": "in", "kind": "ui", "name": "the visitor opens the shop", "step": "Action" },
+      { "seq": 2, "dir": "out", "kind": "http", "name": "GET /stock", "step": "Action", "round": 0 },
+      { "seq": 3, "dir": "out", "kind": "http", "name": "GET /prices", "step": "Action", "round": 0 },
+      { "seq": 4, "dir": "out", "kind": "http", "name": "GET /cart", "step": "Action", "round": 1 }
+    ]
+  },
+  {
+    "case": "shop.feature: Every picture is asked for",
+    "records": [
+      { "seq": 1, "dir": "in", "kind": "ui", "name": "the visitor opens the shop", "step": "Action" },
+      { "seq": 2, "dir": "out", "kind": "http", "name": "GET /images/{id}", "step": "Action", "round": 0 },
+      { "seq": 3, "dir": "out", "kind": "http", "name": "GET /prices", "step": "Action", "round": 0 },
+      { "seq": 4, "dir": "out", "kind": "http", "name": "GET /images/{id}", "step": "Action", "round": 0 }
+    ]
+  },
+  {
+    "case": "shop.feature: The cart is saved and read again",
+    "records": [
+      { "seq": 1, "dir": "in", "kind": "ui", "name": "the visitor saves the cart", "step": "Action" },
+      { "seq": 2, "dir": "out", "kind": "http", "name": "PUT /cart", "step": "Action", "round": 0 },
+      { "seq": 3, "dir": "out", "kind": "http", "name": "GET /cart", "step": "Action", "round": 1 }
+    ]
+  }
+]

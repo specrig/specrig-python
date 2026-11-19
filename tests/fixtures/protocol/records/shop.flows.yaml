@@ -1,6 +1,6 @@
 # Generated from the component suite by specrig: every whole run rewrites the
 # structure; only the description fields are yours.
-specrig: flows/1
+specrig: flows/2
 service: shop
 inputs:
   - message: grpc /shop.Orders/Get
